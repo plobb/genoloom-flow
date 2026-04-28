@@ -1,0 +1,19 @@
+digraph "workflow" {
+    node [shape=rectangle]
+
+    p0 [label="Channel.fromFilePairs\n(source)"]
+    p1 [label="FASTQC\n(fastqc)"]
+    p2 [label="TRIMGALORE\n(trimgalore)"]
+    p3 [label="BWA_MEM\n(bwa_mem)"]
+    p4 [label="SAMTOOLS_SORT\n(samtools_sort)"]
+    p5 [label="SAMTOOLS_INDEX\n(samtools_index)"]
+    p6 [label="MULTIQC\n(multiqc)"]
+
+    p0 -> p1
+    p0 -> p2
+    p1 -> p6
+    p2 -> p3
+    p3 -> p4
+    p4 -> p5
+    p4 -> p6
+}

@@ -1,7 +1,9 @@
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import WorkflowGraph, WorkflowNode, WorkflowEdge
+from parsers.dag_parser import parse_dag
 
 app = FastAPI(title="Nexflow Debugger")
 
@@ -12,18 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-PLACEHOLDER_GRAPH = WorkflowGraph(
-    nodes=[
-        WorkflowNode(id="1", label="FASTQC", processName="FASTQC", status="COMPLETED", duration="1m 2s", cpus=2, memory="4 GB"),
-        WorkflowNode(id="2", label="TRIMGALORE", processName="TRIMGALORE", status="COMPLETED", duration="3m 14s", cpus=4, memory="8 GB"),
-        WorkflowNode(id="3", label="ALIGN", processName="ALIGN", status="FAILED", exitCode=1, duration="12m 5s", cpus=8, memory="32 GB"),
-        WorkflowNode(id="4", label="SORT", processName="SORT", status="UNKNOWN"),
-    ],
-    edges=[
-        WorkflowEdge(source="1", target="2"),
-        WorkflowEdge(source="2", target="3"),
-        WorkflowEdge(source="3", target="4"),
-    ],
+# Path to the run directory being inspected (hardcoded for milestone 2A)
+_RUN_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "sample_runs", "example"
 )
 
 
@@ -34,4 +27,14 @@ def health():
 
 @app.get("/graph", response_model=WorkflowGraph)
 def graph():
-    return PLACEHOLDER_GRAPH
+    dot_path = os.path.join(_RUN_DIR, "dag.dot")
+
+    if not os.path.exists(dot_path):
+        raise HTTPException(status_code=404, detail=f"dag.dot not found at {dot_path}")
+
+    parsed = parse_dag(dot_path)
+
+    nodes = [WorkflowNode(id=n["id"], label=n["label"]) for n in parsed["nodes"]]
+    edges = [WorkflowEdge(source=e["source"], target=e["target"]) for e in parsed["edges"]]
+
+    return WorkflowGraph(nodes=nodes, edges=edges)
