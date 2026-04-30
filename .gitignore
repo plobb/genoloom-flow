@@ -11,3 +11,10 @@ frontend/dist/
 # OS/editor
 .DS_Store
 .vscode/
+
+# Local runtime artefacts
+runs/*
+!runs/.gitkeep
+work/
+.nextflow/
+.nextflow*
