@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from models import WorkflowGraph, WorkflowNode, WorkflowEdge
 from parsers.dag_parser import parse_dag, parse_dag_content
 from parsers.trace_parser import parse_trace_content
+from runners.nextflow_runner import run_nf_core_demo
 
 app = FastAPI(title="GenoLoom")
 
@@ -56,6 +57,12 @@ def graph_sample():
         with open(_SAMPLE_TRACE) as fh:
             status_map = parse_trace_content(fh.read())
     return _build_graph(parse_dag(_SAMPLE_DOT), status_map)
+
+
+@app.post("/api/runs/nf-core-demo-test")
+def trigger_nf_core_demo():
+    """Run nf-core/demo with the test profile and return run artefact paths."""
+    return run_nf_core_demo()
 
 
 @app.post("/graph/upload", response_model=WorkflowGraph)
