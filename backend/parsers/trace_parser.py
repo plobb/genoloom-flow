@@ -1,16 +1,37 @@
-"""Parse a Nextflow trace.txt file into a process -> status mapping."""
+"""Parse a Nextflow trace.txt file into a process -> trace record mapping."""
 
-# Status priority: higher index wins when multiple tasks share a process name
+# FAILED takes priority over COMPLETED when a process has multiple tasks
 _PRIORITY = {"COMPLETED": 0, "FAILED": 1}
 
+# Trace column header -> internal record key
+_COLUMN_MAP = {
+    "task_id":   "task_id",
+    "hash":      "hash",
+    "native_id": "native_id",
+    "status":    "status",
+    "exit":      "exit",
+    "submit":    "submit",
+    "duration":  "duration",
+    "realtime":  "realtime",
+    "%cpu":      "cpu_pct",
+    "peak_rss":  "peak_rss",
+    "peak_vmem": "peak_vmem",
+    "rchar":     "rchar",
+    "wchar":     "wchar",
+}
 
-def parse_trace_content(text: str) -> dict[str, str]:
-    """Return {process_name: worst_status} for COMPLETED/FAILED tasks."""
+
+def parse_trace_content(text: str) -> dict[str, dict]:
+    """Return {process_name: trace_record} for COMPLETED/FAILED tasks.
+
+    When a process has multiple tasks, the FAILED record wins.
+    """
     lines = text.splitlines()
     if not lines:
         return {}
 
     headers = lines[0].split("\t")
+
     try:
         status_idx = headers.index("status")
     except ValueError:
@@ -26,7 +47,14 @@ def parse_trace_content(text: str) -> dict[str, str]:
     else:
         return {}
 
-    result: dict[str, str] = {}
+    # Build index map for every column we care about
+    col_indices: dict[str, int] = {
+        key: headers.index(header)
+        for header, key in _COLUMN_MAP.items()
+        if header in headers
+    }
+
+    result: dict[str, dict] = {}
 
     for line in lines[1:]:
         if not line.strip():
@@ -40,16 +68,24 @@ def parse_trace_content(text: str) -> dict[str, str]:
         if process_idx is not None:
             process = cols[process_idx].strip() if process_idx < len(cols) else ""
         else:
-            # e.g. "BWA_MEM (sample1)" -> "BWA_MEM"
             name = cols[name_idx].strip() if name_idx < len(cols) else ""  # type: ignore[index]
             process = name.split(" (")[0].strip()
 
         if not process:
             continue
 
-        if _PRIORITY[raw_status] > _PRIORITY.get(result.get(process, "COMPLETED"), 0):
-            result[process] = raw_status
-        elif process not in result:
-            result[process] = raw_status
+        # Skip this row if we already have a higher-priority record
+        existing = result.get(process)
+        if existing and _PRIORITY[existing["status"]] >= _PRIORITY[raw_status]:
+            continue
+
+        record: dict[str, str] = {}
+        for key, idx in col_indices.items():
+            if idx < len(cols):
+                val = cols[idx].strip()
+                if val and val != "-":
+                    record[key] = val
+
+        result[process] = record
 
     return result

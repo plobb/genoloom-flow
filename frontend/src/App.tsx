@@ -13,6 +13,7 @@ export default function App() {
   const [traceFile, setTraceFile] = useState<File | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [activeRunId, setActiveRunId] = useState<string>("");
+  const [processOnly, setProcessOnly] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const traceRef = useRef<HTMLInputElement>(null);
 
@@ -207,6 +208,16 @@ export default function App() {
           </>
         )}
         <div style={styles.spacer} />
+        <button
+          style={processOnly
+            ? { ...styles.btn, borderColor: "#4f46e5", color: "#818cf8" }
+            : styles.btn}
+          onClick={() => { setProcessOnly((p) => !p); setSelected(null); }}
+          title="Toggle between full DAG and process nodes only"
+        >
+          {processOnly ? "Process only" : "Full DAG"}
+        </button>
+        <div style={styles.divider} />
         <button style={styles.primaryBtn} onClick={loadSample} disabled={loading}>
           Load sample
           <span style={styles.primaryBtnSub}>Try a demo</span>
@@ -250,6 +261,7 @@ export default function App() {
               edges={graph.edges}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
+              processOnly={processOnly}
             />
             <NodeInspector node={selected} />
           </>
