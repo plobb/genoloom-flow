@@ -1,8 +1,9 @@
 import os
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from models import WorkflowGraph, WorkflowNode, WorkflowEdge
 from parsers.dag_parser import parse_dag, parse_dag_content
@@ -24,6 +25,8 @@ _SAMPLE_TRACE = os.path.join(_SAMPLE_DIR, "trace.txt")
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _RUNS_DIR = _PROJECT_ROOT / "runs"
+_WORK_DIR = _PROJECT_ROOT / "work"
+_FILE_LIMIT = 200 * 1024  # 200 KB
 
 _ARTEFACTS = {
     "dag":      "dag.dot",
@@ -38,6 +41,24 @@ _ARTEFACTS = {
 def _normalise(name: str) -> str:
     """Lowercase + underscores-to-spaces for fuzzy process name matching."""
     return name.replace("_", " ").lower()
+
+
+def _resolve_work_dir(work_base: Path, hash_val: str) -> Path:
+    """Resolve a (possibly shortened) trace hash to the full work directory.
+
+    Nextflow trace hashes are truncated, e.g. "fa/9526f4", while the actual
+    directory is work/fa/9526f4abcdef…  We glob for the first directory under
+    work/<prefix>/ whose name starts with <suffix> and return it if found.
+    """
+    parts = hash_val.split("/", 1)
+    if len(parts) == 2:
+        prefix, suffix = parts
+        prefix_dir = work_base / prefix
+        if prefix_dir.is_dir():
+            for candidate in sorted(prefix_dir.iterdir()):
+                if candidate.is_dir() and candidate.name.startswith(suffix):
+                    return candidate
+    return work_base / hash_val  # exact fallback
 
 
 def _build_graph(
@@ -68,7 +89,8 @@ def _build_graph(
         stderr_path: str | None = None
         hash_val = rec.get("hash")
         if hash_val and work_base is not None:
-            work_dir = str(work_base / hash_val)
+            resolved = _resolve_work_dir(work_base, hash_val)
+            work_dir     = str(resolved)
             command_path = work_dir + "/.command.sh"
             stdout_path  = work_dir + "/.command.out"
             stderr_path  = work_dir + "/.command.err"
@@ -114,6 +136,27 @@ def graph_sample():
         with open(_SAMPLE_TRACE) as fh:
             status_map = parse_trace_content(fh.read())
     return _build_graph(parse_dag(_SAMPLE_DOT), status_map)
+
+
+@app.get("/api/file", response_class=PlainTextResponse)
+def read_task_file(path: str = Query(...)) -> PlainTextResponse:
+    """Serve a task file from within the project work/ directory."""
+    try:
+        resolved = Path(path).resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not str(resolved).startswith(str(_WORK_DIR.resolve())):
+        raise HTTPException(status_code=403, detail="Access denied: path is outside work/")
+
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not resolved.is_file():
+        raise HTTPException(status_code=400, detail="Not a file")
+
+    raw = resolved.read_bytes()[:_FILE_LIMIT]
+    return PlainTextResponse(raw.decode("utf-8", errors="replace"))
 
 
 @app.get("/api/runs")

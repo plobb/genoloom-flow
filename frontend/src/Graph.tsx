@@ -129,10 +129,12 @@ type Props = {
   selectedId: string | null;
   onSelect: (node: WorkflowNode) => void;
   processOnly: boolean;
+  centreKey: number;
 };
 
-export default function Graph({ nodes, edges, selectedId, onSelect, processOnly }: Props) {
+export default function Graph({ nodes, edges, selectedId, onSelect, processOnly, centreKey }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const lastCentreKeyRef = useRef(0);
 
   useEffect(() => {
     if (!svgRef.current || nodes.length === 0) return;
@@ -170,11 +172,24 @@ export default function Graph({ nodes, edges, selectedId, onSelect, processOnly 
 
     const g = svg.append("g");
 
-    svg.call(
-      d3.zoom<SVGSVGElement, unknown>().on("zoom", (event) => {
-        g.attr("transform", event.transform);
-      })
-    );
+    const zoom = d3.zoom<SVGSVGElement, unknown>().on("zoom", (event) => {
+      g.attr("transform", event.transform);
+    });
+    svg.call(zoom);
+
+    // Centre on the selected node when a programmatic jump triggers a new centreKey
+    const shouldCentre = centreKey > lastCentreKeyRef.current;
+    if (shouldCentre) {
+      lastCentreKeyRef.current = centreKey;
+      if (selectedId) {
+        const target = nodeById.get(selectedId);
+        if (target) {
+          const tx = width / 2 - target.x;
+          const ty = height / 2 - target.y;
+          svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty));
+        }
+      }
+    }
 
     svg
       .append("defs")
@@ -265,7 +280,7 @@ export default function Graph({ nodes, edges, selectedId, onSelect, processOnly 
       .style("pointer-events", "none");
 
     return () => { tooltip.remove(); };
-  }, [nodes, edges, selectedId, onSelect, processOnly]);
+  }, [nodes, edges, selectedId, onSelect, processOnly, centreKey]);
 
   const legend = [
     { colour: "#22c55e", label: "Completed" },

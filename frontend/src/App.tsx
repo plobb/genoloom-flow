@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Graph from "./Graph";
 import NodeInspector from "./NodeInspector";
+import DebugSummary from "./DebugSummary";
 import { WorkflowGraph, WorkflowNode, RunSummary } from "./types";
 
 const API = "http://localhost:8000";
@@ -14,6 +15,9 @@ export default function App() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [activeRunId, setActiveRunId] = useState<string>("");
   const [processOnly, setProcessOnly] = useState(false);
+  const [failureIdx, setFailureIdx] = useState(0);
+  const [centreKey, setCentreKey] = useState(0);
+  const [running, setRunning] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const traceRef = useRef<HTMLInputElement>(null);
 
@@ -26,6 +30,14 @@ export default function App() {
     }
   }
 
+  function applyGraph(g: WorkflowGraph) {
+    setGraph(g);
+    setFailureIdx(0);
+    const first = g.nodes.find((n) => n.status === "FAILED") ?? null;
+    setSelected(first);
+    if (first) setCentreKey((k) => k + 1);
+  }
+
   async function loadSample() {
     setError(null);
     setLoading(true);
@@ -33,8 +45,7 @@ export default function App() {
     try {
       const r = await fetch(`${API}/graph`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setGraph(await r.json());
-      setSelected(null);
+      applyGraph(await r.json());
     } catch (e) {
       setError(String(e));
     } finally {
@@ -52,13 +63,31 @@ export default function App() {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.detail ?? `HTTP ${r.status}`);
       }
-      setGraph(await r.json());
-      setSelected(null);
+      applyGraph(await r.json());
     } catch (e) {
       setError(String(e));
       setActiveRunId("");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function launchRun() {
+    setError(null);
+    setRunning(true);
+    try {
+      const r = await fetch(`${API}/api/runs/nf-core-demo-test`, { method: "POST" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail ?? `HTTP ${r.status}`);
+      }
+      const result = await r.json() as { run_id: string; status: string };
+      await fetchRuns();
+      await loadRun(result.run_id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRunning(false);
     }
   }
 
@@ -77,8 +106,7 @@ export default function App() {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.detail ?? `HTTP ${r.status}`);
       }
-      setGraph(await r.json());
-      setSelected(null);
+      applyGraph(await r.json());
     } catch (e) {
       setError(String(e));
     } finally {
@@ -87,6 +115,16 @@ export default function App() {
       if (traceRef.current) traceRef.current.value = "";
       setTraceFile(null);
     }
+  }
+
+  const failedNodes = graph?.nodes.filter((n) => n.status === "FAILED") ?? [];
+
+  function jumpToNextFailure() {
+    if (failedNodes.length === 0) return;
+    const nextIdx = (failureIdx + 1) % failedNodes.length;
+    setFailureIdx(nextIdx);
+    setSelected(failedNodes[nextIdx]);
+    setCentreKey((k) => k + 1);
   }
 
   // Auto-load the sample DAG and runs list on first render
@@ -154,6 +192,16 @@ export default function App() {
       border: "1px solid #3d4468",
       background: "transparent",
       color: "#94a3b8",
+    },
+    runBtn: {
+      padding: "6px 14px",
+      borderRadius: 6,
+      fontSize: 13,
+      fontWeight: 500,
+      cursor: "pointer",
+      border: "1px solid #16a34a",
+      background: "#14532d",
+      color: "#86efac",
     },
     infoStrip: {
       background: "#131620",
@@ -233,6 +281,15 @@ export default function App() {
         <button style={styles.uploadBtn} onClick={() => fileRef.current?.click()} disabled={loading}>
           Upload dag.dot
         </button>
+        <div style={styles.divider} />
+        <button
+          style={styles.runBtn}
+          onClick={launchRun}
+          disabled={running || loading}
+          title="Run nf-core/demo with the test profile (requires Nextflow + Docker)"
+        >
+          {running ? "Running…" : "Run nf-core/demo"}
+        </button>
         <input ref={traceRef} type="file" accept=".txt,text/plain" style={{ display: "none" }} onChange={(e) => setTraceFile(e.target.files?.[0] ?? null)} />
         <input ref={fileRef} type="file" accept=".dot,text/plain" style={{ display: "none" }} onChange={handleFile} />
       </div>
@@ -262,13 +319,36 @@ export default function App() {
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
               processOnly={processOnly}
+              centreKey={centreKey}
             />
+            <DebugSummary node={selected} />
             <NodeInspector node={selected} />
           </>
         ) : (
           <div style={styles.message}>No graph loaded.</div>
         )}
 
+        {failedNodes.length > 0 && (
+          <button
+            onClick={jumpToNextFailure}
+            style={{
+              position: "absolute",
+              top: 12,
+              left: 12,
+              zIndex: 10,
+              padding: "5px 12px",
+              background: "#450a0a",
+              color: "#fca5a5",
+              border: "1px solid #7f1d1d",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: "pointer",
+            }}
+          >
+            ⚠ {failedNodes.length} failed — jump ({failureIdx + 1}/{failedNodes.length})
+          </button>
+        )}
         {error && <div style={styles.errorBanner}>{error}</div>}
       </div>
 
