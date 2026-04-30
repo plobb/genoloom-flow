@@ -8,6 +8,8 @@ const STATUS_COLOUR: Record<string, string> = {
   UNKNOWN: "#9ca3af",
 };
 
+type Row = [string, string | number | undefined];
+
 type Props = {
   node: WorkflowNode | null;
 };
@@ -51,6 +53,15 @@ export default function NodeInspector({ node }: Props) {
     },
     key: { color: "#94a3b8" },
     value: { color: "#e2e8f0", textAlign: "right", maxWidth: 160, wordBreak: "break-all" },
+    sectionLabel: {
+      fontSize: 10,
+      fontWeight: 600,
+      letterSpacing: 1,
+      color: "#475569",
+      textTransform: "uppercase" as const,
+      marginTop: 16,
+      marginBottom: 4,
+    },
   };
 
   if (!node) {
@@ -64,15 +75,44 @@ export default function NodeInspector({ node }: Props) {
 
   const colour = STATUS_COLOUR[node.status ?? "UNKNOWN"];
 
-  const rows: [string, string | number | undefined][] = [
+  const basicRows: Row[] = [
     ["Process", node.processName],
     ["Status", node.status],
     ["Exit code", node.exitCode],
     ["Duration", node.duration],
     ["CPUs", node.cpus],
     ["Memory", node.memory],
-    ["Work dir", node.workDir],
   ];
+
+  const traceRows: Row[] = [
+    ["Realtime", node.realtime],
+    ["CPU", node.cpu_pct],
+    ["Peak RSS", node.peak_rss],
+    ["Peak VMem", node.peak_vmem],
+    ["Read", node.rchar],
+    ["Written", node.wchar],
+    ["Submit", node.submit],
+    ["Hash", node.hash],
+    ["Task ID", node.task_id],
+    ["Native ID", node.native_id],
+  ];
+
+  const visibleTrace = traceRows.filter(([, v]) => v !== undefined && v !== null);
+
+  const pathRows: Row[] = [
+    ["Work dir", node.workDir],
+    ["Command", node.commandPath],
+    ["Stdout", node.stdoutPath],
+    ["Stderr", node.stderrPath],
+  ];
+  const visiblePaths = pathRows.filter(([, v]) => v !== undefined && v !== null);
+
+  const renderRow = ([k, v]: Row) => (
+    <div key={k} style={styles.row}>
+      <span style={styles.key}>{k}</span>
+      <span style={styles.value}>{String(v)}</span>
+    </div>
+  );
 
   return (
     <div style={styles.panel}>
@@ -80,14 +120,19 @@ export default function NodeInspector({ node }: Props) {
       {node.status && (
         <span style={{ ...styles.badge, background: colour }}>{node.status}</span>
       )}
-      {rows
-        .filter(([, v]) => v !== undefined && v !== null)
-        .map(([k, v]) => (
-          <div key={k} style={styles.row}>
-            <span style={styles.key}>{k}</span>
-            <span style={styles.value}>{String(v)}</span>
-          </div>
-        ))}
+      {basicRows.filter(([, v]) => v !== undefined && v !== null).map(renderRow)}
+      {visibleTrace.length > 0 && (
+        <>
+          <div style={styles.sectionLabel}>Trace</div>
+          {visibleTrace.map(renderRow)}
+        </>
+      )}
+      {visiblePaths.length > 0 && (
+        <>
+          <div style={styles.sectionLabel}>Paths</div>
+          {visiblePaths.map(renderRow)}
+        </>
+      )}
     </div>
   );
 }

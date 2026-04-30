@@ -40,16 +40,60 @@ def _normalise(name: str) -> str:
     return name.replace("_", " ").lower()
 
 
-def _build_graph(parsed: dict, status_map: dict[str, str] | None = None) -> WorkflowGraph:
-    # Build a lookup keyed by normalised process name
-    normalised_status = (
+def _build_graph(
+    parsed: dict,
+    status_map: dict[str, dict] | None = None,
+    work_base: Path | None = None,
+) -> WorkflowGraph:
+    normalised = (
         {_normalise(k): v for k, v in status_map.items()} if status_map else {}
     )
 
     nodes = []
     for n in parsed["nodes"]:
-        status = normalised_status.get(_normalise(n["raw_label"])) if normalised_status else None
-        nodes.append(WorkflowNode(id=n["id"], label=n["label"], status=status))
+        rec: dict = normalised.get(_normalise(n["raw_label"])) or {}
+
+        exit_code: int | None = None
+        if rec.get("exit"):
+            try:
+                exit_code = int(rec["exit"])
+            except ValueError:
+                pass
+
+        # Derive work directory paths from trace hash when a run work_base is known.
+        # Nextflow stores task files at work/<hash>/ where hash = "ab/1a2b3c…"
+        work_dir: str | None = None
+        command_path: str | None = None
+        stdout_path: str | None = None
+        stderr_path: str | None = None
+        hash_val = rec.get("hash")
+        if hash_val and work_base is not None:
+            work_dir = str(work_base / hash_val)
+            command_path = work_dir + "/.command.sh"
+            stdout_path  = work_dir + "/.command.out"
+            stderr_path  = work_dir + "/.command.err"
+
+        nodes.append(WorkflowNode(
+            id=n["id"],
+            label=n["label"],
+            status=rec.get("status"),
+            exitCode=exit_code,
+            duration=rec.get("duration"),
+            workDir=work_dir,
+            commandPath=command_path,
+            stdoutPath=stdout_path,
+            stderrPath=stderr_path,
+            hash=rec.get("hash"),
+            task_id=rec.get("task_id"),
+            native_id=rec.get("native_id"),
+            submit=rec.get("submit"),
+            realtime=rec.get("realtime"),
+            cpu_pct=rec.get("cpu_pct"),
+            peak_rss=rec.get("peak_rss"),
+            peak_vmem=rec.get("peak_vmem"),
+            rchar=rec.get("rchar"),
+            wchar=rec.get("wchar"),
+        ))
 
     edges = [WorkflowEdge(source=e["source"], target=e["target"]) for e in parsed["edges"]]
     return WorkflowGraph(nodes=nodes, edges=edges)
@@ -65,7 +109,7 @@ def graph_sample():
     """Return the built-in sample graph (dag + trace) for demo purposes."""
     if not os.path.exists(_SAMPLE_DOT):
         raise HTTPException(status_code=404, detail="Sample dag.dot not found")
-    status_map: dict[str, str] | None = None
+    status_map: dict[str, dict] | None = None
     if os.path.exists(_SAMPLE_TRACE):
         with open(_SAMPLE_TRACE) as fh:
             status_map = parse_trace_content(fh.read())
@@ -99,12 +143,12 @@ def get_run_graph(run_id: str):
     if not dag_path.exists():
         raise HTTPException(status_code=404, detail=f"dag.dot not found for run {run_id!r}")
 
-    status_map: dict[str, str] | None = None
+    status_map: dict[str, dict] | None = None
     trace_path = run_dir / "trace.txt"
     if trace_path.exists():
         status_map = parse_trace_content(trace_path.read_text())
 
-    return _build_graph(parse_dag(str(dag_path)), status_map)
+    return _build_graph(parse_dag(str(dag_path)), status_map, work_base=_PROJECT_ROOT / "work")
 
 
 @app.post("/api/runs/nf-core-demo-test")
@@ -129,7 +173,7 @@ async def graph_upload(
     if not parsed["nodes"]:
         raise HTTPException(status_code=422, detail="No nodes found — is this a valid dag.dot file?")
 
-    status_map: dict[str, str] | None = None
+    status_map: dict[str, dict] | None = None
     if trace is not None:
         trace_bytes = await trace.read()
         try:
