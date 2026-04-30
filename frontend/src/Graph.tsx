@@ -178,10 +178,35 @@ export default function Graph({ nodes, edges, selectedId, onSelect }: Props) {
     };
   }, [nodes, edges, selectedId, onSelect]);
 
+  const legend = [
+    { colour: "#22c55e", label: "Completed" },
+    { colour: "#ef4444", label: "Failed" },
+    { colour: "#9ca3af", label: "Unknown" },
+  ];
+
   return (
-    <svg
-      ref={svgRef}
-      style={{ flex: 1, display: "block", background: "#0f1117" }}
-    />
+    <div style={{ flex: 1, position: "relative", background: "#0f1117" }}>
+      <svg ref={svgRef} style={{ width: "100%", height: "100%", display: "block" }} />
+      <div style={{
+        position: "absolute",
+        bottom: 16,
+        left: 16,
+        display: "flex",
+        flexDirection: "column",
+        gap: 5,
+        background: "rgba(15,17,23,0.75)",
+        border: "1px solid #2d3148",
+        borderRadius: 6,
+        padding: "8px 12px",
+        pointerEvents: "none",
+      }}>
+        {legend.map(({ colour, label }) => (
+          <div key={label} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <div style={{ width: 9, height: 9, borderRadius: "50%", background: colour, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: "#64748b", letterSpacing: 0.2 }}>{label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

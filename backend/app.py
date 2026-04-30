@@ -16,9 +16,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_SAMPLE_DOT = os.path.join(
-    os.path.dirname(__file__), "..", "sample_runs", "example", "dag.dot"
-)
+_SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "sample_runs", "example")
+_SAMPLE_DOT = os.path.join(_SAMPLE_DIR, "dag.dot")
+_SAMPLE_TRACE = os.path.join(_SAMPLE_DIR, "trace.txt")
 
 
 def _normalise(name: str) -> str:
@@ -48,10 +48,14 @@ def health():
 
 @app.get("/graph", response_model=WorkflowGraph)
 def graph_sample():
-    """Return the built-in sample graph for demo purposes."""
+    """Return the built-in sample graph (dag + trace) for demo purposes."""
     if not os.path.exists(_SAMPLE_DOT):
         raise HTTPException(status_code=404, detail="Sample dag.dot not found")
-    return _build_graph(parse_dag(_SAMPLE_DOT))
+    status_map: dict[str, str] | None = None
+    if os.path.exists(_SAMPLE_TRACE):
+        with open(_SAMPLE_TRACE) as fh:
+            status_map = parse_trace_content(fh.read())
+    return _build_graph(parse_dag(_SAMPLE_DOT), status_map)
 
 
 @app.post("/graph/upload", response_model=WorkflowGraph)

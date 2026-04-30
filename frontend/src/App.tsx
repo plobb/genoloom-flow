@@ -79,15 +79,35 @@ export default function App() {
       background: "#2d3148",
       color: "#e2e8f0",
     },
+    primaryBtn: {
+      display: "flex",
+      flexDirection: "column" as const,
+      alignItems: "center",
+      padding: "7px 20px",
+      borderRadius: 6,
+      fontSize: 14,
+      fontWeight: 600,
+      cursor: "pointer",
+      border: "none",
+      background: "#4f46e5",
+      color: "#fff",
+      lineHeight: 1.3,
+    },
+    primaryBtnSub: {
+      fontSize: 10,
+      fontWeight: 400,
+      color: "#a5b4fc",
+      letterSpacing: 0.2,
+    },
     uploadBtn: {
       padding: "6px 14px",
       borderRadius: 6,
       fontSize: 13,
       fontWeight: 500,
       cursor: "pointer",
-      border: "none",
-      background: "#4f46e5",
-      color: "#fff",
+      border: "1px solid #3d4468",
+      background: "transparent",
+      color: "#94a3b8",
     },
     infoStrip: {
       background: "#131620",
@@ -125,8 +145,9 @@ export default function App() {
     <div style={styles.root}>
       <div style={styles.header}>
         <span style={styles.appName}>GENOLOOM</span>
-        <button style={styles.btn} onClick={loadSample} disabled={loading}>
+        <button style={styles.primaryBtn} onClick={loadSample} disabled={loading}>
           Load sample
+          <span style={styles.primaryBtnSub}>Try a demo</span>
         </button>
         <button
           style={traceFile ? { ...styles.btn, borderColor: "#22c55e", color: "#22c55e" } : styles.btn}
@@ -147,6 +168,9 @@ export default function App() {
         <div style={styles.infoTitle}>GenoLoom Flow Viewer</div>
         <div style={styles.infoSub}>
           Upload a Nextflow dag.dot file to visualise and explore your workflow graph interactively.
+        </div>
+        <div style={{ fontSize: 13, color: "#475569", marginBottom: 6 }}>
+          Quickly identify failed steps and understand workflow dependencies
         </div>
         <div style={styles.infoHint}>
           Tip: Generate a dag.dot file using:{" "}
