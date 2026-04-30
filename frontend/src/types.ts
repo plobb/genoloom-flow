@@ -21,3 +21,16 @@ export type WorkflowGraph = {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
 };
+
+export type RunSummary = {
+  run_id: string;
+  run_dir: string;
+  artefacts: {
+    dag: boolean;
+    trace: boolean;
+    report: boolean;
+    timeline: boolean;
+    stdout: boolean;
+    stderr: boolean;
+  };
+};

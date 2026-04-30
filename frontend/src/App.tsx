@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Graph from "./Graph";
 import NodeInspector from "./NodeInspector";
-import { WorkflowGraph, WorkflowNode } from "./types";
+import { WorkflowGraph, WorkflowNode, RunSummary } from "./types";
 
 const API = "http://localhost:8000";
 
@@ -11,12 +11,24 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [traceFile, setTraceFile] = useState<File | null>(null);
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [activeRunId, setActiveRunId] = useState<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
   const traceRef = useRef<HTMLInputElement>(null);
+
+  async function fetchRuns() {
+    try {
+      const r = await fetch(`${API}/api/runs`);
+      if (r.ok) setRuns(await r.json());
+    } catch {
+      // Runs list is best-effort; don't surface errors for this
+    }
+  }
 
   async function loadSample() {
     setError(null);
     setLoading(true);
+    setActiveRunId("");
     try {
       const r = await fetch(`${API}/graph`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -29,11 +41,32 @@ export default function App() {
     }
   }
 
+  async function loadRun(run_id: string) {
+    setError(null);
+    setLoading(true);
+    setActiveRunId(run_id);
+    try {
+      const r = await fetch(`${API}/api/runs/${run_id}`);
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail ?? `HTTP ${r.status}`);
+      }
+      setGraph(await r.json());
+      setSelected(null);
+    } catch (e) {
+      setError(String(e));
+      setActiveRunId("");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setError(null);
     setLoading(true);
+    setActiveRunId("");
     const form = new FormData();
     form.append("file", file);
     if (traceFile) form.append("trace", traceFile);
@@ -55,8 +88,8 @@ export default function App() {
     }
   }
 
-  // Auto-load the sample DAG on first render
-  useEffect(() => { loadSample(); }, []);
+  // Auto-load the sample DAG and runs list on first render
+  useEffect(() => { loadSample(); fetchRuns(); }, []);
 
   const styles: Record<string, React.CSSProperties> = {
     root: { display: "flex", flexDirection: "column", height: "100vh", fontFamily: "system-ui, sans-serif" },
@@ -68,7 +101,19 @@ export default function App() {
       borderBottom: "1px solid #2d3148",
       padding: "10px 20px",
     },
-    appName: { fontSize: 14, fontWeight: 600, color: "#94a3b8", letterSpacing: 1, marginRight: "auto" },
+    appName: { fontSize: 14, fontWeight: 600, color: "#94a3b8", letterSpacing: 1 },
+    divider: { width: 1, height: 20, background: "#2d3148", flexShrink: 0 },
+    runSelect: {
+      padding: "5px 10px",
+      borderRadius: 6,
+      fontSize: 13,
+      background: "#2d3148",
+      color: "#e2e8f0",
+      border: "1px solid #3d4468",
+      cursor: "pointer",
+      maxWidth: 220,
+    },
+    spacer: { flex: 1 },
     btn: {
       padding: "6px 14px",
       borderRadius: 6,
@@ -145,6 +190,23 @@ export default function App() {
     <div style={styles.root}>
       <div style={styles.header}>
         <span style={styles.appName}>GENOLOOM</span>
+        {runs.length > 0 && (
+          <>
+            <div style={styles.divider} />
+            <select
+              style={styles.runSelect}
+              value={activeRunId}
+              disabled={loading}
+              onChange={(e) => { if (e.target.value) loadRun(e.target.value); }}
+            >
+              <option value="">Past runs…</option>
+              {runs.map((r) => (
+                <option key={r.run_id} value={r.run_id}>{r.run_id}</option>
+              ))}
+            </select>
+          </>
+        )}
+        <div style={styles.spacer} />
         <button style={styles.primaryBtn} onClick={loadSample} disabled={loading}>
           Load sample
           <span style={styles.primaryBtnSub}>Try a demo</span>
