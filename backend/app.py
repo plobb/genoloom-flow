@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,18 @@ app.add_middleware(
 _SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "..", "sample_runs", "example")
 _SAMPLE_DOT = os.path.join(_SAMPLE_DIR, "dag.dot")
 _SAMPLE_TRACE = os.path.join(_SAMPLE_DIR, "trace.txt")
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_RUNS_DIR = _PROJECT_ROOT / "runs"
+
+_ARTEFACTS = {
+    "dag":      "dag.dot",
+    "trace":    "trace.txt",
+    "report":   "report.html",
+    "timeline": "timeline.html",
+    "stdout":   "stdout.txt",
+    "stderr":   "stderr.txt",
+}
 
 
 def _normalise(name: str) -> str:
@@ -57,6 +70,41 @@ def graph_sample():
         with open(_SAMPLE_TRACE) as fh:
             status_map = parse_trace_content(fh.read())
     return _build_graph(parse_dag(_SAMPLE_DOT), status_map)
+
+
+@app.get("/api/runs")
+def list_runs():
+    """List all run directories and report which artefacts are present."""
+    if not _RUNS_DIR.exists():
+        return []
+    return [
+        {
+            "run_id":    d.name,
+            "run_dir":   str(d),
+            "artefacts": {key: (d / fname).exists() for key, fname in _ARTEFACTS.items()},
+        }
+        for d in sorted(_RUNS_DIR.iterdir())
+        if d.is_dir()
+    ]
+
+
+@app.get("/api/runs/{run_id}", response_model=WorkflowGraph)
+def get_run_graph(run_id: str):
+    """Parse dag.dot and trace.txt for a completed run and return graph JSON."""
+    run_dir = (_RUNS_DIR / run_id).resolve()
+    if not str(run_dir).startswith(str(_RUNS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+
+    dag_path = run_dir / "dag.dot"
+    if not dag_path.exists():
+        raise HTTPException(status_code=404, detail=f"dag.dot not found for run {run_id!r}")
+
+    status_map: dict[str, str] | None = None
+    trace_path = run_dir / "trace.txt"
+    if trace_path.exists():
+        status_map = parse_trace_content(trace_path.read_text())
+
+    return _build_graph(parse_dag(str(dag_path)), status_map)
 
 
 @app.post("/api/runs/nf-core-demo-test")
