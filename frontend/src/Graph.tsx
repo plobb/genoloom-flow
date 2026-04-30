@@ -2,6 +2,9 @@ import { useEffect, useRef } from "react";
 import * as d3 from "d3";
 import { WorkflowNode, WorkflowEdge } from "./types";
 
+const NODE_R = 22;
+const NODE_R_HOVER = 28;
+
 const STATUS_COLOUR: Record<string, string> = {
   COMPLETED: "#22c55e",
   FAILED: "#ef4444",
@@ -32,6 +35,22 @@ export default function Graph({ nodes, edges, selectedId, onSelect }: Props) {
     const width = svgRef.current.clientWidth || 800;
     const height = svgRef.current.clientHeight || 600;
 
+    // Tooltip div — appended to body so it escapes SVG clipping
+    const tooltip = d3.select("body")
+      .append("div")
+      .style("position", "fixed")
+      .style("pointer-events", "none")
+      .style("background", "#1e2130")
+      .style("color", "#e2e8f0")
+      .style("border", "1px solid #3d4468")
+      .style("border-radius", "6px")
+      .style("padding", "5px 10px")
+      .style("font-size", "12px")
+      .style("white-space", "nowrap")
+      .style("opacity", "0")
+      .style("transition", "opacity 0.1s")
+      .style("z-index", "9999");
+
     const simNodes: SimNode[] = nodes.map((n) => ({ ...n }));
     const nodeById = new Map(simNodes.map((n) => [n.id, n]));
 
@@ -55,7 +74,7 @@ export default function Graph({ nodes, edges, selectedId, onSelect }: Props) {
       .append("marker")
       .attr("id", "arrow")
       .attr("viewBox", "0 -5 10 10")
-      .attr("refX", 28)
+      .attr("refX", NODE_R + 6)
       .attr("refY", 0)
       .attr("markerWidth", 6)
       .attr("markerHeight", 6)
@@ -73,20 +92,60 @@ export default function Graph({ nodes, edges, selectedId, onSelect }: Props) {
       .attr("stroke-width", 1.5)
       .attr("marker-end", "url(#arrow)");
 
+    const downstreamIds = selectedId
+      ? new Set(edges.filter((e) => e.source === selectedId).map((e) => e.target))
+      : new Set<string>();
+
+    const nodeRole = (d: SimNode) => {
+      if (d.id === selectedId) return "selected";
+      if (downstreamIds.has(d.id)) return "downstream";
+      if (selectedId) return "dimmed";
+      return "normal";
+    };
+
     const nodeGroup = g
       .append("g")
       .selectAll("g")
       .data(simNodes)
       .join("g")
       .style("cursor", "pointer")
-      .on("click", (_event, d) => onSelect(d));
+      .style("opacity", (d) => nodeRole(d) === "dimmed" ? 0.25 : 1)
+      .on("click", (_event, d) => onSelect(d))
+      .on("mouseenter", function (_event, d) {
+        d3.select(this).select("circle")
+          .transition().duration(120)
+          .attr("r", NODE_R_HOVER);
+        tooltip.text(d.label).style("opacity", "1");
+      })
+      .on("mousemove", (event) => {
+        tooltip
+          .style("left", `${event.clientX + 14}px`)
+          .style("top", `${event.clientY - 28}px`);
+      })
+      .on("mouseleave", function () {
+        d3.select(this).select("circle")
+          .transition().duration(120)
+          .attr("r", NODE_R);
+        tooltip.style("opacity", "0");
+      });
 
     nodeGroup
       .append("circle")
-      .attr("r", 22)
+      .attr("r", NODE_R)
       .attr("fill", (d) => STATUS_COLOUR[d.status ?? "UNKNOWN"])
-      .attr("stroke", (d) => (d.id === selectedId ? "#f8fafc" : "transparent"))
-      .attr("stroke-width", 3);
+      .attr("stroke", (d) => {
+        const role = nodeRole(d);
+        if (role === "selected") return "#f8fafc";
+        if (role === "downstream") return "#f59e0b";
+        return "transparent";
+      })
+      .attr("stroke-width", 3)
+      .style("filter", (d) => {
+        const role = nodeRole(d);
+        if (role === "selected") return "drop-shadow(0 0 6px #f8fafc88)";
+        if (role === "downstream") return "drop-shadow(0 0 6px #f59e0b88)";
+        return "none";
+      });
 
     nodeGroup
       .append("text")
@@ -95,7 +154,8 @@ export default function Graph({ nodes, edges, selectedId, onSelect }: Props) {
       .attr("dy", 36)
       .attr("fill", "#e2e8f0")
       .attr("font-size", 11)
-      .attr("font-family", "system-ui, sans-serif");
+      .attr("font-family", "system-ui, sans-serif")
+      .style("pointer-events", "none");
 
     const simulation = d3
       .forceSimulation<SimNode>(simNodes)
@@ -114,6 +174,7 @@ export default function Graph({ nodes, edges, selectedId, onSelect }: Props) {
 
     return () => {
       simulation.stop();
+      tooltip.remove();
     };
   }, [nodes, edges, selectedId, onSelect]);
 

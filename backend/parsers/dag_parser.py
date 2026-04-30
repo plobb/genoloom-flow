@@ -12,9 +12,16 @@ _NODE_RE = re.compile(r'^\s*(\w+)\s*\[.*?label="([^"]+)"')
 _EDGE_RE = re.compile(r'^\s*(\w+)\s*->\s*(\w+)')
 
 
+def _clean_label(raw: str) -> str:
+    if raw.startswith("Channel."):
+        raw = "Input " + raw[len("Channel."):]
+    return raw.replace("_", " ")
+
+
 class NodeDict(TypedDict):
     id: str
     label: str
+    raw_label: str
 
 
 class EdgeDict(TypedDict):
@@ -22,25 +29,29 @@ class EdgeDict(TypedDict):
     target: str
 
 
-def parse_dag(dot_path: str) -> dict:
+def parse_dag_content(content: str) -> dict:
     nodes: list[NodeDict] = []
     edges: list[EdgeDict] = []
     seen: set[str] = set()
 
-    with open(dot_path) as fh:
-        for line in fh:
-            node_match = _NODE_RE.match(line)
-            if node_match:
-                node_id, raw_label = node_match.group(1), node_match.group(2)
-                if node_id not in seen:
-                    seen.add(node_id)
-                    # Take the first line of a multi-line label as the display label
-                    label = raw_label.split("\\n")[0].strip()
-                    nodes.append({"id": node_id, "label": label})
-                continue
+    for line in content.splitlines():
+        node_match = _NODE_RE.match(line)
+        if node_match:
+            node_id, raw_label = node_match.group(1), node_match.group(2)
+            if node_id not in seen:
+                seen.add(node_id)
+                first_line = raw_label.split("\\n")[0].strip()
+                label = _clean_label(first_line)
+                nodes.append({"id": node_id, "label": label, "raw_label": first_line})
+            continue
 
-            edge_match = _EDGE_RE.match(line)
-            if edge_match:
-                edges.append({"source": edge_match.group(1), "target": edge_match.group(2)})
+        edge_match = _EDGE_RE.match(line)
+        if edge_match:
+            edges.append({"source": edge_match.group(1), "target": edge_match.group(2)})
 
     return {"nodes": nodes, "edges": edges}
+
+
+def parse_dag(dot_path: str) -> dict:
+    with open(dot_path) as fh:
+        return parse_dag_content(fh.read())
