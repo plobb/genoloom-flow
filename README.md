@@ -1,5 +1,35 @@
-# Nexflow Debugger
+# GenoLoom Flow
 
+Interactive Nextflow workflow visualiser and debugger.
+
+## Features
+
+- Upload and explore Nextflow DAGs
+- Visualise pipeline structure with D3
+- Track task status (running, completed, failed)
+- Inspect node-level execution details
+- View Nextflow reports and timelines inline
+- Run local nf-core workflows
+
+## Why
+
+Nextflow pipelines are powerful but hard to debug visually.  
+GenoLoom Flow provides a fast, interactive way to understand what is happening inside a run.
+
+## Demo
+
+Coming soon.
+
+## Roadmap
+
+- Real-time task updates
+- nf-core workflow integration
+- Cloud execution (AWS)
+- Token-based auth + multi-user runs
+
+## Author
+
+Philip Lobb
 A local-first developer tool for inspecting and debugging Nextflow pipeline runs.
 
 ## Requirements
