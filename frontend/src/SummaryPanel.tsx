@@ -57,10 +57,10 @@ export default function SummaryPanel({ pane, onClose, node, run }: Props) {
 
   const title = (() => {
     switch (pane.type) {
-      case "debug-summary": return `Debug Summary — ${node?.label ?? ""}`;
+      case "debug-summary": return `Debug summary — ${node?.label ?? ""}`;
       case "report":        return `Report — ${run?.name ?? pane.runId}`;
       case "timeline":      return `Timeline — ${run?.name ?? pane.runId}`;
-      case "file":          return pane.label;
+      case "file":          return `${pane.label} — ${node?.label ?? ""}`;
     }
   })();
 
@@ -134,11 +134,20 @@ export default function SummaryPanel({ pane, onClose, node, run }: Props) {
 
     if (iframeUrl) {
       return (
-        <iframe
-          src={iframeUrl}
-          style={{ flex: 1, width: "100%", border: "none", background: "#fff" }}
-          title={title}
-        />
+        <div style={{ flex: 1, overflow: "hidden", padding: "12px", display: "flex", flexDirection: "column" }}>
+          <iframe
+            src={iframeUrl}
+            style={{
+              flex: 1,
+              width: "100%",
+              border: "1px solid #2d3148",
+              borderRadius: 6,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+              background: "#fff",
+            }}
+            title={title}
+          />
+        </div>
       );
     }
 
@@ -191,8 +200,8 @@ export default function SummaryPanel({ pane, onClose, node, run }: Props) {
   }
 
   return (
-    <div style={{ width: 500, minWidth: 500, background: "#161923", borderLeft: "1px solid #2d3148", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #2d3148", flexShrink: 0, gap: 10 }}>
+    <div style={{ width: 500, minWidth: 500, background: "#161923", borderLeft: "1px solid #2d3148", borderRight: "1px solid #2d3148", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #2d3148", flexShrink: 0, gap: 10, position: "sticky", top: 0, zIndex: 1, background: "#161923" }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {title}
         </span>
