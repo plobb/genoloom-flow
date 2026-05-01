@@ -19,3 +19,4 @@ work/
 .nextflow/
 .nextflow*
 .nextflow.log*
+*:Zone.Identifier
