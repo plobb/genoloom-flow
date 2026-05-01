@@ -48,6 +48,84 @@ function PulsingBanner({ message }: { message: string }) {
   );
 }
 
+// ── Dropdown helpers ──────────────────────────────────────────────────────────
+
+function DropdownMenu({ label, triggerStyle, open, onToggle, children }: {
+  label: React.ReactNode;
+  triggerStyle?: React.CSSProperties;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onToggle();
+    }
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  // onToggle changes identity each render but is semantically stable
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const base: React.CSSProperties = {
+    padding: "6px 11px", borderRadius: 6, fontSize: 13, fontWeight: 500,
+    cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
+    border: "1px solid #3d4468", background: "#2d3148", color: "#e2e8f0",
+  };
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button onClick={onToggle} style={{ ...base, ...triggerStyle }}>
+        {label}
+        <span style={{ fontSize: 8, opacity: 0.55, marginTop: 1 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 6px)", right: 0,
+          background: "#161b2e", border: "1px solid #2d3148", borderRadius: 6,
+          padding: 4, minWidth: 170, zIndex: 200,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.55)",
+        }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ onClick, disabled, children }: {
+  onClick?: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "block", width: "100%", textAlign: "left",
+        padding: "7px 10px", borderRadius: 4, border: "none",
+        background: hover && !disabled ? "#2d3148" : "transparent",
+        color: disabled ? "#475569" : "#e2e8f0",
+        cursor: disabled ? "not-allowed" : "pointer",
+        fontSize: 12, fontWeight: 500, opacity: disabled ? 0.55 : 1,
+        lineHeight: 1.4,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MenuDivider() {
+  return <div style={{ height: 1, background: "#2d3148", margin: "3px 4px" }} />;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function App() {
   // --- core state ------------------------------------------------------------
   const [workflowTemplates]           = useState<WorkflowTemplate[]>(SEED_TEMPLATES);
@@ -65,6 +143,7 @@ export default function App() {
   const [centreKey, setCentreKey]     = useState(0);
   const [running, setRunning]         = useState(false);
   const [summaryPane, setSummaryPane] = useState<SummaryPane | null>(null);
+  const [openMenu, setOpenMenu]       = useState<string | null>(null);
   // --- refs ------------------------------------------------------------------
   const fileRef  = useRef<HTMLInputElement>(null);
   const traceRef = useRef<HTMLInputElement>(null);
@@ -356,12 +435,38 @@ export default function App() {
     simCleanups.current.set(runId, cleanup);
   }
 
+  // --- summary pane -----------------------------------------------------------
+  function handleOpenSummary(pane: SummaryPane) {
+    setSummaryPane((current) => {
+      if (!current) return pane;
+      // Toggle off debug-summary when clicking Summary for the same node again
+      if (current.type === "debug-summary" && pane.type === "debug-summary" && current.nodeId === pane.nodeId) {
+        return null;
+      }
+      // No-op when clicking Report/Timeline that is already open
+      if ((pane.type === "report" || pane.type === "timeline") && current.type === pane.type) {
+        return current;
+      }
+      return pane;
+    });
+  }
+
+  function handleSelectNode(node: WorkflowNode) {
+    setSelected(node);
+    if (node.status === "FAILED") {
+      setSummaryPane((current) => {
+        if (current?.type === "debug-summary" && current.nodeId === node.id) return current;
+        return { type: "debug-summary", nodeId: node.id };
+      });
+    }
+  }
+
   // --- graph navigation ------------------------------------------------------
   function jumpToNextFailure() {
     if (failedNodes.length === 0) return;
     const nextIdx = (failureIdx + 1) % failedNodes.length;
     setFailureIdx(nextIdx);
-    setSelected(failedNodes[nextIdx]);
+    handleSelectNode(failedNodes[nextIdx]);
     setCentreKey((k) => k + 1);
   }
 
@@ -446,41 +551,66 @@ export default function App() {
           </>
         )}
         <div style={s.spacer} />
-        <button
-          style={processOnly ? { ...s.btn, borderColor: "#4f46e5", color: "#818cf8" } : s.btn}
-          onClick={() => { setProcessOnly((p) => !p); setSelected(null); setSummaryPane(null); }}
-          title="Toggle between full DAG and process nodes only"
+
+        {/* ── View ── */}
+        <DropdownMenu
+          label="View"
+          open={openMenu === "view"}
+          onToggle={() => setOpenMenu((m) => m === "view" ? null : "view")}
         >
-          {processOnly ? "Process only" : "Full DAG"}
-        </button>
-        <div style={s.divider} />
-        <button style={s.primaryBtn} onClick={loadSample} disabled={loading}>
-          Load sample
-          <span style={s.primaryBtnSub}>Try a demo</span>
-        </button>
-        <button style={s.demoBtn} onClick={startDemo} title="Simulate a demo RNA-seq workflow with one failing node">
-          {activeDemoRunning ? "Simulating…" : "Run demo workflow"}
-        </button>
-        <button
-          style={traceFile ? { ...s.btn, borderColor: "#22c55e", color: "#22c55e" } : s.btn}
-          onClick={() => traceRef.current?.click()}
-          disabled={loading}
-          title={traceFile ? `trace.txt staged: ${traceFile.name}` : "Optionally add a trace.txt to colour nodes by status"}
+          <MenuItem onClick={() => { setProcessOnly(false); setSelected(null); setSummaryPane(null); setOpenMenu(null); }}>
+            {!processOnly ? "✓ " : "  "}Full DAG
+          </MenuItem>
+          <MenuItem onClick={() => { setProcessOnly(true); setSelected(null); setSummaryPane(null); setOpenMenu(null); }}>
+            {processOnly ? "✓ " : "  "}Process only
+          </MenuItem>
+        </DropdownMenu>
+
+        {/* ── Demo ── */}
+        <DropdownMenu
+          label={activeDemoRunning ? "Demo •" : "Demo"}
+          triggerStyle={activeDemoRunning ? { borderColor: "#d97706", color: "#fcd34d", background: "#451a03" } : undefined}
+          open={openMenu === "demo"}
+          onToggle={() => setOpenMenu((m) => m === "demo" ? null : "demo")}
         >
-          {traceFile ? "trace.txt staged" : "+ trace.txt"}
-        </button>
-        <button style={s.uploadBtn} onClick={() => fileRef.current?.click()} disabled={loading}>
-          Upload dag.dot
-        </button>
-        <div style={s.divider} />
-        <button
-          style={s.runBtn}
-          onClick={launchRun}
-          disabled={running || loading}
-          title="Run nf-core/demo with the test profile (requires Nextflow + Docker)"
+          <MenuItem onClick={() => { loadSample(); setOpenMenu(null); }} disabled={loading}>
+            Load sample
+          </MenuItem>
+          <MenuItem onClick={() => { startDemo(); setOpenMenu(null); }} disabled={activeDemoRunning}>
+            {activeDemoRunning ? "Simulating…" : "Run demo workflow"}
+          </MenuItem>
+        </DropdownMenu>
+
+        {/* ── Upload ── */}
+        <DropdownMenu
+          label="Upload"
+          open={openMenu === "upload"}
+          onToggle={() => setOpenMenu((m) => m === "upload" ? null : "upload")}
         >
-          {running ? "Running…" : "Run nf-core/demo"}
-        </button>
+          <MenuItem onClick={() => { fileRef.current?.click(); setOpenMenu(null); }} disabled={loading}>
+            Upload dag.dot
+          </MenuItem>
+          <MenuDivider />
+          <MenuItem onClick={() => { traceRef.current?.click(); setOpenMenu(null); }} disabled={loading}>
+            {traceFile ? `✓ trace.txt staged` : "Add trace.txt"}
+          </MenuItem>
+        </DropdownMenu>
+
+        {/* ── Run ── */}
+        <DropdownMenu
+          label="Run"
+          triggerStyle={{ borderColor: "#16a34a", background: "#14532d", color: "#86efac" }}
+          open={openMenu === "run"}
+          onToggle={() => setOpenMenu((m) => m === "run" ? null : "run")}
+        >
+          <MenuItem onClick={() => { launchRun(); setOpenMenu(null); }} disabled={running || loading}>
+            {running ? "Running…" : "Run nf-core/demo"}
+          </MenuItem>
+          <div style={{ padding: "4px 10px 6px", fontSize: 10, color: "#475569", lineHeight: 1.4 }}>
+            Requires Nextflow + Docker
+          </div>
+        </DropdownMenu>
+
         <input ref={traceRef} type="file" accept=".txt,text/plain" style={{ display: "none" }} onChange={(e) => setTraceFile(e.target.files?.[0] ?? null)} />
         <input ref={fileRef} type="file" accept=".dot,text/plain" style={{ display: "none" }} onChange={handleFile} />
       </div>
@@ -558,7 +688,7 @@ export default function App() {
               nodes={activeRun.nodes}
               edges={activeRun.edges}
               selectedId={selected?.id ?? null}
-              onSelect={setSelected}
+              onSelect={handleSelectNode}
               onDeselect={() => { setSelected(null); setSummaryPane(null); }}
               processOnly={processOnly}
               centreKey={centreKey}
@@ -576,7 +706,7 @@ export default function App() {
               node={selected}
               run={activeRun}
               onDeselect={() => { setSelected(null); setSummaryPane(null); }}
-              onOpenSummary={setSummaryPane}
+              onOpenSummary={handleOpenSummary}
             />
           </>
         ) : (
