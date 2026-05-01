@@ -3,12 +3,12 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from models import WorkflowGraph, WorkflowNode, WorkflowEdge
 from parsers.dag_parser import parse_dag, parse_dag_content
 from parsers.trace_parser import parse_trace_content
-from runners.nextflow_runner import run_nf_core_demo
+from runners.nextflow_runner import run_nf_core_demo, get_run_status
 
 app = FastAPI(title="GenoLoom")
 
@@ -173,6 +173,39 @@ def list_runs():
         for d in sorted(_RUNS_DIR.iterdir())
         if d.is_dir()
     ]
+
+
+@app.get("/api/runs/{run_id}/status")
+def run_status(run_id: str):
+    """Return live status and artefact availability for a running or completed run."""
+    run_dir = (_RUNS_DIR / run_id).resolve()
+    if not str(run_dir).startswith(str(_RUNS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    return get_run_status(run_id, run_dir)
+
+
+@app.get("/api/runs/{run_id}/report", response_class=HTMLResponse)
+def get_run_report(run_id: str):
+    """Serve report.html for a completed run."""
+    run_dir = (_RUNS_DIR / run_id).resolve()
+    if not str(run_dir).startswith(str(_RUNS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    report_path = run_dir / "report.html"
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="report.html not found for this run")
+    return HTMLResponse(report_path.read_text(encoding="utf-8", errors="replace"))
+
+
+@app.get("/api/runs/{run_id}/timeline", response_class=HTMLResponse)
+def get_run_timeline(run_id: str):
+    """Serve timeline.html for a completed run."""
+    run_dir = (_RUNS_DIR / run_id).resolve()
+    if not str(run_dir).startswith(str(_RUNS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    timeline_path = run_dir / "timeline.html"
+    if not timeline_path.exists():
+        raise HTTPException(status_code=404, detail="timeline.html not found for this run")
+    return HTMLResponse(timeline_path.read_text(encoding="utf-8", errors="replace"))
 
 
 @app.get("/api/runs/{run_id}", response_model=WorkflowGraph)

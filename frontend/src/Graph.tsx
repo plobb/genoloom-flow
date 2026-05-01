@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, ReactNode } from "react";
 import * as d3 from "d3";
 import { WorkflowNode, WorkflowEdge } from "./types";
 
@@ -13,6 +13,7 @@ const STATUS_COLOUR: Record<string, string> = {
   CACHED: "#3b82f6",
   SKIPPED: "#9ca3af",
   UNKNOWN: "#9ca3af",
+  RUNNING: "#f59e0b",
 };
 
 type LayoutNode = WorkflowNode & { x: number; y: number };
@@ -128,16 +129,30 @@ type Props = {
   edges: WorkflowEdge[];
   selectedId: string | null;
   onSelect: (node: WorkflowNode) => void;
+  onDeselect: () => void;
   processOnly: boolean;
   centreKey: number;
+  statusBanner?: ReactNode;
 };
 
-export default function Graph({ nodes, edges, selectedId, onSelect, processOnly, centreKey }: Props) {
+export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, processOnly, centreKey, statusBanner }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const lastCentreKeyRef = useRef(0);
+  // Tracks previous node statuses to detect changes between renders for ripple animation
+  const prevStatusRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (!svgRef.current || nodes.length === 0) return;
+
+    // Detect which nodes changed status since the last render
+    const changedIds = new Set<string>();
+    for (const n of nodes) {
+      const prev = prevStatusRef.current.get(n.id);
+      if (prev !== undefined && prev !== (n.status ?? "UNKNOWN")) {
+        changedIds.add(n.id);
+      }
+    }
+    prevStatusRef.current = new Map(nodes.map((n) => [n.id, n.status ?? "UNKNOWN"]));
 
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
@@ -176,6 +191,7 @@ export default function Graph({ nodes, edges, selectedId, onSelect, processOnly,
       g.attr("transform", event.transform);
     });
     svg.call(zoom);
+    svg.on("click", () => onDeselect());
 
     // Centre on the selected node when a programmatic jump triggers a new centreKey
     const shouldCentre = centreKey > lastCentreKeyRef.current;
@@ -236,7 +252,7 @@ export default function Graph({ nodes, edges, selectedId, onSelect, processOnly,
       .attr("transform", (d) => `translate(${d.x},${d.y})`)
       .style("cursor", "pointer")
       .style("opacity", (d) => (nodeRole(d) === "dimmed" ? 0.25 : 1))
-      .on("click", (_event, d) => onSelect(d))
+      .on("click", (event, d) => { event.stopPropagation(); onSelect(d); })
       .on("mouseenter", function (_event, d) {
         d3.select(this).select("circle").transition().duration(120).attr("r", NODE_R_HOVER);
         tooltip.text(d.label).style("opacity", "1");
@@ -279,18 +295,52 @@ export default function Graph({ nodes, edges, selectedId, onSelect, processOnly,
       .attr("font-family", "system-ui, sans-serif")
       .style("pointer-events", "none");
 
+    // Ripple ring on nodes whose status changed since the last render
+    if (changedIds.size > 0) {
+      nodeGroup
+        .filter((d) => changedIds.has(d.id))
+        .append("circle")
+        .attr("r", NODE_R)
+        .attr("fill", "none")
+        .attr("stroke", "#ffffff")
+        .attr("stroke-width", 1.5)
+        .style("opacity", "0.75")
+        .attr("pointer-events", "none")
+        .transition()
+        .duration(700)
+        .ease(d3.easeQuadOut)
+        .attr("r", NODE_R + 20)
+        .style("opacity", "0")
+        .remove();
+    }
+
     return () => { tooltip.remove(); };
-  }, [nodes, edges, selectedId, onSelect, processOnly, centreKey]);
+  }, [nodes, edges, selectedId, onSelect, onDeselect, processOnly, centreKey]);
 
   const legend = [
     { colour: "#22c55e", label: "Completed" },
     { colour: "#ef4444", label: "Failed" },
+    { colour: "#f59e0b", label: "Running" },
     { colour: "#9ca3af", label: "Unknown" },
   ];
 
   return (
     <div style={{ flex: 1, position: "relative", background: "#0f1117" }}>
       <svg ref={svgRef} style={{ width: "100%", height: "100%", display: "block" }} />
+      {statusBanner && (
+        <div style={{
+          position: "absolute",
+          top: 12,
+          left: 0,
+          right: 0,
+          display: "flex",
+          justifyContent: "center",
+          pointerEvents: "none",
+          zIndex: 5,
+        }}>
+          {statusBanner}
+        </div>
+      )}
       <div
         style={{
           position: "absolute",

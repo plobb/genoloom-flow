@@ -1,4 +1,4 @@
-export type Status = "COMPLETED" | "FAILED" | "CACHED" | "SKIPPED" | "UNKNOWN";
+export type Status = "COMPLETED" | "FAILED" | "CACHED" | "SKIPPED" | "UNKNOWN" | "RUNNING";
 
 export type WorkflowNode = {
   id: string;
@@ -47,4 +47,36 @@ export type RunSummary = {
     stdout: boolean;
     stderr: boolean;
   };
+};
+
+export type WorkflowTemplate = {
+  id: string;
+  name: string;
+  source: "local" | "nf-core" | "github";
+  repo?: string;
+  version?: string;
+  description?: string;
+};
+
+export type RunSource = "sample" | "simulated" | "upload" | "local-nextflow";
+
+export type SummaryPane =
+  | { type: "debug-summary"; nodeId: string }
+  | { type: "report"; runId: string }
+  | { type: "timeline"; runId: string }
+  | { type: "file"; label: string; path: string };
+
+export type WorkflowRun = {
+  id: string;
+  workflowTemplateId: string;
+  name: string;
+  runSource: RunSource;
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  startedAt: string;
+  completedAt?: string;
+  // Only populated for local-nextflow runs
+  dagAvailable?: boolean;
+  traceAvailable?: boolean;
 };

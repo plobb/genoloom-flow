@@ -1,7 +1,5 @@
-import { useState, useEffect } from "react";
-import { WorkflowNode } from "./types";
-
-const API = "http://localhost:8000";
+import { useState } from "react";
+import { WorkflowNode, WorkflowRun, RunSource, SummaryPane } from "./types";
 
 const STATUS_COLOUR: Record<string, string> = {
   COMPLETED: "#22c55e",
@@ -13,85 +11,33 @@ const STATUS_COLOUR: Record<string, string> = {
 
 type Row = [string, string | number | undefined];
 
-type Props = {
-  node: WorkflowNode | null;
+const RUN_SOURCE_CONFIG: Record<RunSource, { label: string; color: string }> = {
+  "sample":         { label: "SAMPLE", color: "#60a5fa" },
+  "simulated":      { label: "DEMO",   color: "#fbbf24" },
+  "upload":         { label: "UPLOAD", color: "#a78bfa" },
+  "local-nextflow": { label: "LOCAL",  color: "#4ade80" },
 };
 
-export default function NodeInspector({ node }: Props) {
-  const [fileLabel, setFileLabel]     = useState<string | null>(null);
-  const [filePath, setFilePath]       = useState<string | null>(null);
-  const [fileContent, setFileContent] = useState<string | null>(null);
-  const [fileLoading, setFileLoading] = useState(false);
-  const [fileError, setFileError]     = useState<string | null>(null);
-  const [wordWrap, setWordWrap]       = useState(false);
-  const [copied, setCopied]           = useState(false);
+const RUN_STATUS_COLOUR: Record<WorkflowRun["status"], string> = {
+  PENDING: "#9ca3af", RUNNING: "#f59e0b", COMPLETED: "#22c55e", FAILED: "#ef4444",
+};
 
-  // Clear viewer on node change; auto-load stderr for FAILED nodes
-  useEffect(() => {
-    setFileLabel(null);
-    setFilePath(null);
-    setFileContent(null);
-    setFileError(null);
-    setFileLoading(false);
-    setCopied(false);
+const WORKFLOW_DISPLAY: Record<string, string> = {
+  "nf-core-demo": "nf-core/demo",
+  "rnaseq-demo":  "RNA-seq demo",
+  "uploaded":     "Uploaded",
+  "sample":       "Sample",
+};
 
-    if (node?.status === "FAILED" && node.stderrPath) {
-      const path = node.stderrPath;
-      setFileLabel("Stderr");
-      setFilePath(path);
-      setFileLoading(true);
-      fetch(`${API}/api/file?path=${encodeURIComponent(path)}`)
-        .then(async (r) => {
-          if (!r.ok) {
-            const body = await r.json().catch(() => null);
-            throw new Error(body?.detail ?? `HTTP ${r.status}`);
-          }
-          return r.text();
-        })
-        .then((text) => setFileContent(text))
-        .catch((e) => setFileError(String(e)))
-        .finally(() => setFileLoading(false));
-    }
-  }, [node?.id]);
+type Props = {
+  node: WorkflowNode | null;
+  run?: WorkflowRun | null;
+  onDeselect?: () => void;
+  onOpenSummary?: (pane: SummaryPane) => void;
+};
 
-  async function loadFile(label: string, path: string) {
-    setFileLabel(label);
-    setFilePath(path);
-    setFileContent(null);
-    setFileError(null);
-    setFileLoading(true);
-    setCopied(false);
-    try {
-      const r = await fetch(`${API}/api/file?path=${encodeURIComponent(path)}`);
-      if (!r.ok) {
-        const body = await r.json().catch(() => null);
-        throw new Error(body?.detail ?? `HTTP ${r.status}`);
-      }
-      setFileContent(await r.text());
-    } catch (e) {
-      setFileError(String(e));
-    } finally {
-      setFileLoading(false);
-    }
-  }
-
-  function closeViewer() {
-    setFileLabel(null);
-    setFilePath(null);
-    setFileContent(null);
-    setFileError(null);
-    setCopied(false);
-  }
-
-  async function copyToClipboard() {
-    if (!fileContent) return;
-    await navigator.clipboard.writeText(fileContent);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-
-  const fileName   = filePath ? (filePath.split("/").pop() ?? filePath) : fileLabel;
-  const syntaxHint = filePath?.endsWith(".sh") ? "bash" : "text";
+export default function NodeInspector({ node, run, onDeselect, onOpenSummary }: Props) {
+  const [deselectHover, setDeselectHover] = useState(false);
 
   const styles: Record<string, React.CSSProperties> = {
     panel: {
@@ -105,7 +51,7 @@ export default function NodeInspector({ node }: Props) {
       flexDirection: "column",
     },
     empty: { color: "#64748b", fontSize: 14, marginTop: 8 },
-    title: { fontSize: 16, fontWeight: 600, marginBottom: 16, color: "#f1f5f9" },
+    title: { fontSize: 16, fontWeight: 600, color: "#f1f5f9" },
     badge: {
       display: "inline-block",
       padding: "2px 10px",
@@ -113,7 +59,7 @@ export default function NodeInspector({ node }: Props) {
       fontSize: 12,
       fontWeight: 600,
       color: "#0f1117",
-      marginBottom: 16,
+      marginBottom: 12,
     },
     row: {
       display: "flex",
@@ -144,82 +90,109 @@ export default function NodeInspector({ node }: Props) {
       cursor: "pointer",
       flexShrink: 0,
     },
-    fileBtnActive: {
+    summaryBtn: {
       fontSize: 11,
-      padding: "2px 8px",
+      padding: "3px 10px",
       borderRadius: 4,
       border: "1px solid #4f46e5",
       background: "#2d3148",
       color: "#818cf8",
       cursor: "pointer",
-      flexShrink: 0,
+      marginBottom: 12,
+      alignSelf: "flex-start" as const,
     },
-    // ---- file viewer ----
-    viewer: {
-      marginTop: 16,
-      borderTop: "1px solid #2d3148",
-      paddingTop: 10,
-      flex: 1,
-      display: "flex",
-      flexDirection: "column",
-      minHeight: 0,
-    },
-    viewerTitleRow: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "baseline",
-      marginBottom: 6,
-    },
-    viewerTitle: {
-      fontSize: 12,
-      fontWeight: 600,
-      color: "#e2e8f0",
-      fontFamily: "monospace",
-    },
-    closeBtn: {
-      fontSize: 12,
-      background: "none",
-      border: "none",
-      color: "#475569",
-      cursor: "pointer",
-      padding: 0,
-      lineHeight: 1,
-      flexShrink: 0,
-    },
-    toolbar: {
+    deselectBtn: {
+      width: 22,
+      height: 22,
       display: "flex",
       alignItems: "center",
-      gap: 6,
-      marginBottom: 8,
-    },
-    syntaxBadge: {
-      fontSize: 10,
-      padding: "1px 6px",
-      borderRadius: 3,
-      background: "#0f1117",
-      color: "#64748b",
-      border: "1px solid #2d3148",
-      fontFamily: "monospace",
-      letterSpacing: 0.3,
-    },
-    toolBtn: {
-      fontSize: 11,
-      padding: "1px 7px",
-      borderRadius: 4,
+      justifyContent: "center",
+      borderRadius: "50%",
       border: "1px solid #3d4468",
-      background: "#2d3148",
-      color: "#94a3b8",
+      background: deselectHover ? "#3d4468" : "#2d3148",
+      color: deselectHover ? "#e2e8f0" : "#64748b",
       cursor: "pointer",
+      padding: 0,
+      fontSize: 13,
+      lineHeight: 1,
+      flexShrink: 0,
+      transition: "background 0.1s, color 0.1s",
     },
-    statusMsg: { fontSize: 12, color: "#64748b", padding: "4px 0" },
-    errorMsg:  { fontSize: 12, color: "#f87171", padding: "4px 0" },
   };
 
   if (!node) {
+    if (!run) {
+      return (
+        <div style={styles.panel}>
+          <div style={{ ...styles.title, marginBottom: 16 }}>Inspector</div>
+          <div style={styles.empty}>Click a node to inspect it.</div>
+        </div>
+      );
+    }
+
+    const src = RUN_SOURCE_CONFIG[run.runSource];
+    const isLocal = run.runSource === "local-nextflow";
+    const workflowName = WORKFLOW_DISPLAY[run.workflowTemplateId] ?? run.workflowTemplateId;
+
+    const runRows: [string, React.ReactNode][] = [
+      ["Name",    run.name],
+      ["Status",  <span style={{ color: RUN_STATUS_COLOUR[run.status] }}>{run.status}</span>],
+      ["Started", new Date(run.startedAt).toLocaleString()],
+      ...(run.completedAt ? [["Completed", new Date(run.completedAt).toLocaleString()] as [string, React.ReactNode]] : []),
+    ];
+
+    if (isLocal) {
+      runRows.push(["Run ID",   <span style={{ fontFamily: "monospace", fontSize: 11 }}>{run.id}</span>]);
+      runRows.push(["Workflow", workflowName]);
+      runRows.push(["DAG",      run.dagAvailable  ? "✓" : "✗"]);
+      runRows.push(["Trace",    run.traceAvailable ? "✓" : "✗"]);
+    }
+
     return (
       <div style={styles.panel}>
-        <div style={styles.title}>Inspector</div>
-        <div style={styles.empty}>Click a node to inspect it.</div>
+        <div style={{ ...styles.title, marginBottom: 16 }}>Run Info</div>
+        <span style={{
+          display: "inline-block",
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: 0.5,
+          color: src.color,
+          border: `1px solid ${src.color}50`,
+          background: `${src.color}18`,
+          borderRadius: 3,
+          padding: "1px 6px",
+          marginBottom: 16,
+        }}>
+          {src.label}
+        </span>
+        {runRows.map(([k, v]) => (
+          <div key={String(k)} style={styles.row}>
+            <span style={styles.key}>{k}</span>
+            <span style={styles.value}>{v}</span>
+          </div>
+        ))}
+        {isLocal && onOpenSummary && (
+          <>
+            <div style={styles.sectionLabel}>Artefacts</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <button
+                style={styles.fileBtn}
+                onClick={() => onOpenSummary({ type: "report", runId: run.id })}
+              >
+                Report
+              </button>
+              <button
+                style={styles.fileBtn}
+                onClick={() => onOpenSummary({ type: "timeline", runId: run.id })}
+              >
+                Timeline
+              </button>
+            </div>
+          </>
+        )}
+        {run.nodes.length > 0 && (
+          <div style={{ ...styles.empty, marginTop: 8 }}>Click a node to inspect it.</div>
+        )}
       </div>
     );
   }
@@ -265,28 +238,32 @@ export default function NodeInspector({ node }: Props) {
 
   const hasPathSection = node.workDir || fileButtons.length > 0;
 
-  const preStyle: React.CSSProperties = {
-    margin: 0,
-    fontSize: 11,
-    fontFamily: "'Fira Mono', 'Cascadia Code', 'Menlo', monospace",
-    color: "#cbd5e1",
-    background: "#0a0c12",
-    padding: "8px 10px 24px",
-    borderRadius: 4,
-    overflowX: "auto",
-    overflowY: "auto",
-    maxHeight: 420,
-    minHeight: 180,
-    whiteSpace: wordWrap ? "pre-wrap" : "pre",
-    wordBreak: wordWrap ? "break-all" : "normal",
-    flex: 1,
-  };
-
   return (
     <div style={styles.panel}>
-      <div style={styles.title}>{node.label}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={styles.title}>{node.label}</div>
+        {onDeselect && (
+          <button
+            style={styles.deselectBtn}
+            onClick={onDeselect}
+            onMouseEnter={() => setDeselectHover(true)}
+            onMouseLeave={() => setDeselectHover(false)}
+            title="Deselect node"
+          >✕</button>
+        )}
+      </div>
+
       {node.status && (
         <span style={{ ...styles.badge, background: colour }}>{node.status}</span>
+      )}
+
+      {onOpenSummary && node.status && (
+        <button
+          style={styles.summaryBtn}
+          onClick={() => onOpenSummary({ type: "debug-summary", nodeId: node.id })}
+        >
+          Summary
+        </button>
       )}
 
       {basicRows.filter(([, v]) => v !== undefined && v !== null).map(renderRow)}
@@ -311,54 +288,14 @@ export default function NodeInspector({ node }: Props) {
             <div key={label} style={styles.row}>
               <span style={styles.key}>{label}</span>
               <button
-                style={fileLabel === label ? styles.fileBtnActive : styles.fileBtn}
-                onClick={() => loadFile(label, path)}
+                style={styles.fileBtn}
+                onClick={() => onOpenSummary?.({ type: "file", label, path })}
               >
-                {fileLabel === label && fileLoading ? "Loading…" : "View"}
+                View
               </button>
             </div>
           ))}
         </>
-      )}
-
-      {fileLabel && (
-        <div style={styles.viewer}>
-          {/* Title row */}
-          <div style={styles.viewerTitleRow}>
-            <span style={styles.viewerTitle}>Viewing: {fileName}</span>
-            <button style={styles.closeBtn} onClick={closeViewer}>✕</button>
-          </div>
-
-          {/* Toolbar — only shown when content is ready */}
-          {fileContent !== null && (
-            <div style={styles.toolbar}>
-              <span style={styles.syntaxBadge}>{syntaxHint}</span>
-              <button
-                style={{
-                  ...styles.toolBtn,
-                  ...(wordWrap ? { borderColor: "#4f46e5", color: "#818cf8" } : {}),
-                }}
-                onClick={() => setWordWrap((w) => !w)}
-                title="Toggle line wrapping"
-              >
-                {wordWrap ? "Wrap: on" : "Wrap: off"}
-              </button>
-              <button
-                style={{
-                  ...styles.toolBtn,
-                  ...(copied ? { borderColor: "#22c55e", color: "#22c55e" } : {}),
-                }}
-                onClick={copyToClipboard}
-              >
-                {copied ? "Copied!" : "Copy"}
-              </button>
-            </div>
-          )}
-
-          {fileLoading && <div style={styles.statusMsg}>Loading…</div>}
-          {fileError   && <div style={styles.errorMsg}>{fileError}</div>}
-          {fileContent !== null && <pre style={preStyle}>{fileContent}</pre>}
-        </div>
       )}
     </div>
   );
