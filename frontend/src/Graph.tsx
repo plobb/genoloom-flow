@@ -201,11 +201,14 @@ type Props = {
   centreKey: number;
   layout: "force" | "dag";
   statusBanner?: ReactNode;
+  hoveredTaskId?: string | null;
 };
 
-export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, processOnly, centreKey, layout, statusBanner }: Props) {
+export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, processOnly, centreKey, layout, statusBanner, hoveredTaskId }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const lastCentreKeyRef = useRef(0);
+  const hoveredTaskIdRef = useRef<string | null>(null);
+  hoveredTaskIdRef.current = hoveredTaskId ?? null;
   // Tracks previous node statuses to detect changes between renders for ripple animation
   const prevStatusRef = useRef<Map<string, string>>(new Map());
 
@@ -288,17 +291,36 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
     svg.call(zoom);
     svg.on("click", () => onDeselect());
 
-    // Centre on the selected node when a programmatic jump triggers a new centreKey
+    // Centre on the selected node (+ local neighbourhood) when a programmatic jump fires
     const shouldCentre = centreKey > lastCentreKeyRef.current;
     if (shouldCentre) {
       lastCentreKeyRef.current = centreKey;
-      if (selectedId) {
-        const target = nodeById.get(selectedId);
-        if (target) {
-          const tx = width / 2 - target.x;
-          const ty = height / 2 - target.y;
-          svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty));
+      const target = selectedId ? nodeById.get(selectedId) : null;
+      if (target) {
+        // Collect direct upstream and downstream neighbours for context
+        const nbIds = new Set([selectedId!]);
+        for (const e of visibleEdges) {
+          if (e.target === selectedId) nbIds.add(e.source);
+          if (e.source === selectedId) nbIds.add(e.target);
         }
+        const nbNodes = [...nbIds]
+          .map((id) => nodeById.get(id))
+          .filter((n): n is LayoutNode => !!n);
+
+        // Centre on the neighbourhood centroid unless it spans most of the viewport
+        let cx = target.x, cy = target.y;
+        if (nbNodes.length > 1) {
+          const xs = nbNodes.map((n) => n.x);
+          const ys = nbNodes.map((n) => n.y);
+          const bbW = Math.max(...xs) - Math.min(...xs);
+          const bbH = Math.max(...ys) - Math.min(...ys);
+          if (bbW < width * 0.75 && bbH < height * 0.75) {
+            cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+            cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+          }
+        }
+
+        svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2 - cx, height / 2 - cy));
       }
     }
 
@@ -346,6 +368,7 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
       .selectAll("g")
       .data(layoutNodes)
       .join("g")
+      .attr("class", "nf-node")
       .attr("transform", (d) => `translate(${d.x},${d.y})`)
       .style("cursor", "pointer")
       .style("opacity", (d) => {
@@ -398,6 +421,16 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
       });
 
     nodeGroup
+      .append("circle")
+      .attr("class", "hover-ring")
+      .attr("r", NODE_R + 5)
+      .attr("fill", "none")
+      .attr("stroke", "#a78bfa")
+      .attr("stroke-width", 2)
+      .style("opacity", 0)
+      .style("pointer-events", "none");
+
+    nodeGroup
       .append("text")
       .text((d) => displayLabel(d.label))
       .attr("text-anchor", "middle")
@@ -444,8 +477,31 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
         .remove();
     }
 
+    // Restore hover ring if the SVG was rebuilt while a task was still hovered
+    const hid = hoveredTaskIdRef.current;
+    if (hid) {
+      g.selectAll<SVGGElement, LayoutNode>(".nf-node")
+        .filter((d) => d.id === hid || (d.childNodeIds?.includes(hid) ?? false))
+        .select(".hover-ring")
+        .style("opacity", "1");
+    }
+
     return () => { tooltip.remove(); };
   }, [nodes, edges, selectedId, onSelect, onDeselect, processOnly, centreKey, layout]);
+
+  // Lightweight effect — updates only the hover ring without rebuilding the SVG
+  useEffect(() => {
+    if (!svgRef.current) return;
+    const svg = d3.select(svgRef.current);
+    svg.selectAll(".hover-ring").style("opacity", "0");
+    const hid = hoveredTaskId;
+    if (hid) {
+      svg.selectAll<SVGGElement, LayoutNode>(".nf-node")
+        .filter((d) => d.id === hid || (d.childNodeIds?.includes(hid) ?? false))
+        .select(".hover-ring")
+        .style("opacity", "1");
+    }
+  }, [hoveredTaskId]);
 
   const legend = [
     { colour: "#22c55e", label: "Completed" },

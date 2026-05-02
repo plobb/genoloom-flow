@@ -23,9 +23,10 @@ type Props = {
   run: WorkflowRun | null;
   onOpenPane?: (pane: SummaryPane) => void;
   onSelectTask?: (taskId: string) => void;
+  onHoverTask?: (taskId: string | null) => void;
 };
 
-export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onSelectTask }: Props) {
+export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onSelectTask, onHoverTask }: Props) {
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError]     = useState<string | null>(null);
@@ -242,8 +243,8 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
                   transition: "background 0.1s, border-color 0.1s",
                 }}
                 onClick={() => onSelectTask?.(task.id)}
-                onMouseEnter={() => setHoveredTaskId(task.id)}
-                onMouseLeave={() => setHoveredTaskId(null)}
+                onMouseEnter={() => { setHoveredTaskId(task.id); onHoverTask?.(task.id); }}
+                onMouseLeave={() => { setHoveredTaskId(null); onHoverTask?.(null); }}
               >
                 <div style={{ display: "flex", alignItems: "baseline", marginBottom: 4, gap: 7 }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: sc, flexShrink: 0, alignSelf: "center" }} />

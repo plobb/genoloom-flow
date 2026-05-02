@@ -262,6 +262,7 @@ export default function App() {
   const [mode, setMode]               = useState<"debugger" | "workbench">("debugger");
   const [layout, setLayout]           = useState<"force" | "dag">("dag");
   const [graphView, setGraphView]     = useState<"process" | "full">("process");
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   // --- refs ------------------------------------------------------------------
   const fileRef  = useRef<HTMLInputElement>(null);
   const traceRef = useRef<HTMLInputElement>(null);
@@ -594,6 +595,7 @@ export default function App() {
   }
 
   function handleSelectNode(node: WorkflowNode) {
+    if (selected?.id === node.id) return;
     setSelected(node);
     if (node.status === "FAILED") {
       setSummaryPane((current) => {
@@ -605,11 +607,13 @@ export default function App() {
 
   // --- graph navigation ------------------------------------------------------
   function jumpToNode(node: WorkflowNode) {
+    if (selected?.id === node.id) return;
     handleSelectNode(node);
     setCentreKey((k) => k + 1);
   }
 
   function handleSelectTask(taskId: string) {
+    if (selected?.id === taskId && graphView === "full") return;
     const node = activeRun?.nodes.find((n) => n.id === taskId);
     if (!node) return;
     setGraphView("full");
@@ -933,6 +937,7 @@ export default function App() {
               centreKey={centreKey}
               layout={layout}
               statusBanner={localRunBanner}
+              hoveredTaskId={hoveredTaskId}
             />
             {summaryPane && (
               <SummaryPanel
@@ -942,6 +947,7 @@ export default function App() {
                 run={activeRun}
                 onOpenPane={handleOpenSummary}
                 onSelectTask={handleSelectTask}
+                onHoverTask={setHoveredTaskId}
               />
             )}
             <NodeInspector
