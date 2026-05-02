@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from models import WorkflowGraph, WorkflowNode, WorkflowEdge
 from parsers.dag_parser import parse_dag, parse_dag_content
 from parsers.trace_parser import parse_trace_content
-from runners.nextflow_runner import run_nf_core_demo, get_run_status
+from runners.nextflow_runner import run_nf_core_demo, run_nf_core_rnaseq, get_run_status
 
 app = FastAPI(title="GenoLoom")
 
@@ -231,6 +231,12 @@ def get_run_graph(run_id: str):
 def trigger_nf_core_demo():
     """Run nf-core/demo with the test profile and return run artefact paths."""
     return run_nf_core_demo()
+
+
+@app.post("/api/runs/nf-core-rnaseq-test")
+def trigger_nf_core_rnaseq():
+    """Run nf-core/rnaseq with the test profile and return run artefact paths."""
+    return run_nf_core_rnaseq()
 
 
 @app.post("/graph/upload", response_model=WorkflowGraph)

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Graph from "./Graph";
 import NodeInspector from "./NodeInspector";
 import SummaryPanel from "./SummaryPanel";
-import { WorkflowGraph, WorkflowNode, WorkflowRun, WorkflowTemplate, RunSummary, RunSource, SummaryPane } from "./types";
+import { WorkflowGraph, WorkflowNode, WorkflowEdge, WorkflowRun, WorkflowTemplate, RunSummary, RunSource, SummaryPane, Status } from "./types";
 import { getInitialDemoGraph, runDemoSimulation } from "./demoWorkflow";
 
 const API = "http://localhost:8000";
@@ -124,6 +124,121 @@ function MenuDivider() {
   return <div style={{ height: 1, background: "#2d3148", margin: "3px 4px" }} />;
 }
 
+// ── Process graph derivation ──────────────────────────────────────────────────
+const PROC_RANK: Record<string, number> = {
+  UNKNOWN: 0, SKIPPED: 0, CACHED: 1, COMPLETED: 1, RUNNING: 2, FAILED: 3,
+};
+const RANK_TO_STATUS = ["UNKNOWN", "COMPLETED", "RUNNING", "FAILED"] as const;
+
+function processKeyOf(label: string): string {
+  if (/fromFilePairs/i.test(label)) return "Input";
+  const segs = label.split(":");
+  return segs[segs.length - 1].trim() || label;
+}
+
+function deriveProcessGraph(
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {
+  const groups = new Map<string, WorkflowNode[]>();
+  for (const n of nodes) {
+    const key = processKeyOf(n.label);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(n);
+  }
+
+  const procNodes: WorkflowNode[] = [];
+  const keyToId = new Map<string, string>();
+  let i = 0;
+  for (const [key, children] of groups) {
+    const id = `proc-${i++}`;
+    keyToId.set(key, id);
+
+    let worstRank = 0;
+    let completed = 0, failed = 0, running = 0, unknown = 0;
+    for (const c of children) {
+      const rank = PROC_RANK[c.status ?? "UNKNOWN"] ?? 0;
+      if (rank > worstRank) worstRank = rank;
+      const s = c.status;
+      if (s === "COMPLETED" || s === "CACHED") completed++;
+      else if (s === "FAILED") failed++;
+      else if (s === "RUNNING") running++;
+      else unknown++;
+    }
+
+    procNodes.push({
+      id,
+      label: key,
+      status: RANK_TO_STATUS[worstRank] as Status,
+      taskCount: children.length,
+      completedCount: completed,
+      failedCount: failed,
+      runningCount: running,
+      unknownCount: unknown,
+      childNodeIds: children.map((c) => c.id),
+    });
+  }
+
+  const nodeToKey = new Map(nodes.map((n) => [n.id, processKeyOf(n.label)]));
+  const seen = new Set<string>();
+  const procEdges: WorkflowEdge[] = [];
+  for (const e of edges) {
+    const sk = nodeToKey.get(e.source);
+    const tk = nodeToKey.get(e.target);
+    if (!sk || !tk || sk === tk) continue;
+    const sid = keyToId.get(sk)!;
+    const tid = keyToId.get(tk)!;
+    const ekey = `${sid}→${tid}`;
+    if (!seen.has(ekey)) { seen.add(ekey); procEdges.push({ source: sid, target: tid }); }
+  }
+
+  return { nodes: procNodes, edges: procEdges };
+}
+// ── End process graph derivation ─────────────────────────────────────────────
+
+function findRootCauseCandidate(
+  selected: WorkflowNode,
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+): WorkflowNode | null {
+  if (selected.status !== "FAILED") return null;
+
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const parentMap = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!parentMap.has(e.target)) parentMap.set(e.target, []);
+    parentMap.get(e.target)!.push(e.source);
+  }
+
+  // BFS backward from selected — collect all FAILED ancestors
+  const visited = new Set<string>([selected.id]);
+  const queue = [selected.id];
+  const failedAncestorIds = new Set<string>();
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const pid of (parentMap.get(id) ?? [])) {
+      if (visited.has(pid)) continue;
+      visited.add(pid);
+      const pn = nodeById.get(pid);
+      if (pn?.status === "FAILED") {
+        failedAncestorIds.add(pid);
+        queue.push(pid);
+      }
+    }
+  }
+
+  if (failedAncestorIds.size === 0) return null; // selected is the root cause
+
+  // Find the earliest FAILED ancestor — one whose own parents are not FAILED
+  for (const id of failedAncestorIds) {
+    const hasFailedParent = (parentMap.get(id) ?? []).some((pid) => failedAncestorIds.has(pid));
+    if (!hasFailedParent) return nodeById.get(id)!;
+  }
+
+  return nodeById.get(failedAncestorIds.values().next().value as string)!;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -144,6 +259,9 @@ export default function App() {
   const [running, setRunning]         = useState(false);
   const [summaryPane, setSummaryPane] = useState<SummaryPane | null>(null);
   const [openMenu, setOpenMenu]       = useState<string | null>(null);
+  const [mode, setMode]               = useState<"debugger" | "workbench">("debugger");
+  const [layout, setLayout]           = useState<"force" | "dag">("dag");
+  const [graphView, setGraphView]     = useState<"process" | "full">("process");
   // --- refs ------------------------------------------------------------------
   const fileRef  = useRef<HTMLInputElement>(null);
   const traceRef = useRef<HTMLInputElement>(null);
@@ -155,8 +273,16 @@ export default function App() {
   }, []);
 
   // --- derived ---------------------------------------------------------------
-  const activeRun   = workflowRuns.find((r) => r.id === activeRunId) ?? null;
-  const failedNodes = activeRun?.nodes.filter((n) => n.status === "FAILED") ?? [];
+  const activeRun = workflowRuns.find((r) => r.id === activeRunId) ?? null;
+
+  const displayGraph = graphView === "process" && activeRun
+    ? deriveProcessGraph(activeRun.nodes, activeRun.edges)
+    : { nodes: activeRun?.nodes ?? [], edges: activeRun?.edges ?? [] };
+
+  const failedNodes = displayGraph.nodes.filter((n) => n.status === "FAILED");
+  const rootCauseNode = selected?.status === "FAILED"
+    ? findRootCauseCandidate(selected, displayGraph.nodes, displayGraph.edges)
+    : undefined;
   // Highlight the active entry in the backend-runs dropdown
   const activeBackendRunId = backendRuns.some((r) => r.run_id === activeRunId)
     ? (activeRunId ?? "")
@@ -180,7 +306,10 @@ export default function App() {
 
   // Wraps a loaded graph in a WorkflowRun and makes it active.
   // Same runId → the existing run is replaced (idempotent reload).
-  function applyGraph(g: WorkflowGraph, opts: { runId: string; name: string; runSource: RunSource }) {
+  function applyGraph(g: WorkflowGraph, opts: {
+    runId: string; name: string; runSource: RunSource;
+    reportAvailable?: boolean; timelineAvailable?: boolean;
+  }) {
     const run: WorkflowRun = {
       id: opts.runId,
       workflowTemplateId: "uploaded",
@@ -196,6 +325,8 @@ export default function App() {
       traceAvailable: opts.runSource === "local-nextflow"
         ? g.nodes.some((n) => n.hash !== undefined)
         : undefined,
+      reportAvailable:   opts.reportAvailable,
+      timelineAvailable: opts.timelineAvailable,
     };
     upsertRun(run);
     setActiveRunId(opts.runId);
@@ -241,7 +372,14 @@ export default function App() {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.detail ?? `HTTP ${r.status}`);
       }
-      applyGraph(await r.json(), { runId: run_id, name: run_id, runSource: "local-nextflow" });
+      const summary = backendRuns.find((s) => s.run_id === run_id);
+      applyGraph(await r.json(), {
+        runId: run_id,
+        name: run_id,
+        runSource: "local-nextflow",
+        reportAvailable:   summary?.artefacts.report,
+        timelineAvailable: summary?.artefacts.timeline,
+      });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -249,14 +387,18 @@ export default function App() {
     }
   }
 
-  async function launchRun() {
+  async function launchRun(opts?: { endpoint?: string; templateId?: string; displayName?: string }) {
+    const endpoint    = opts?.endpoint    ?? "/api/runs/nf-core-demo-test";
+    const templateId  = opts?.templateId  ?? "nf-core-demo";
+    const displayName = opts?.displayName ?? "nf-core/demo";
+
     setError(null);
     setRunning(true);
 
     // Step 1 — POST to start the run. The backend returns immediately with a run_id.
     let runId: string;
     try {
-      const r = await fetch(`${API}/api/runs/nf-core-demo-test`, { method: "POST" });
+      const r = await fetch(`${API}${endpoint}`, { method: "POST" });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.detail ?? `HTTP ${r.status}`);
@@ -276,8 +418,8 @@ export default function App() {
       ...prev,
       {
         id: runId,
-        workflowTemplateId: "nf-core-demo",
-        name: `nf-core/demo (${shortId})`,
+        workflowTemplateId: templateId,
+        name: `${displayName} (${shortId})`,
         runSource: "local-nextflow" as const,
         status: "RUNNING" as const,
         nodes: [],
@@ -462,6 +604,20 @@ export default function App() {
   }
 
   // --- graph navigation ------------------------------------------------------
+  function jumpToNode(node: WorkflowNode) {
+    handleSelectNode(node);
+    setCentreKey((k) => k + 1);
+  }
+
+  function handleSelectTask(taskId: string) {
+    const node = activeRun?.nodes.find((n) => n.id === taskId);
+    if (!node) return;
+    setGraphView("full");
+    setSummaryPane(null);   // clear task-list; handleSelectNode re-opens debug-summary for FAILED
+    handleSelectNode(node);
+    setCentreKey((k) => k + 1);
+  }
+
   function jumpToNextFailure() {
     if (failedNodes.length === 0) return;
     const nextIdx = (failureIdx + 1) % failedNodes.length;
@@ -479,6 +635,17 @@ export default function App() {
 
   // Auto-load the backend sample DAG and past-runs list on first render
   useEffect(() => { loadSample(); fetchBackendRuns(); }, []);
+
+  // Sync report/timeline availability from backend into workflowRuns whenever backendRuns updates
+  useEffect(() => {
+    if (backendRuns.length === 0) return;
+    setWorkflowRuns((prev) => prev.map((r) => {
+      const s = backendRuns.find((br) => br.run_id === r.id);
+      if (!s) return r;
+      return { ...r, reportAvailable: s.artefacts.report, timelineAvailable: s.artefacts.timeline };
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendRuns]);
 
   // Status banner shown as an overlay on the graph while a local run is in progress
   const localRunBanner = (() => {
@@ -550,6 +717,24 @@ export default function App() {
             </select>
           </>
         )}
+        {/* ── Mode switch ── */}
+        <div style={{ display: "flex", background: "#131620", border: "1px solid #2d3148", borderRadius: 6, overflow: "hidden" }}>
+          {(["debugger", "workbench"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              style={{
+                padding: "5px 12px", fontSize: 12, fontWeight: 500, cursor: "pointer", border: "none",
+                background: mode === m ? "#4f46e5" : "transparent",
+                color: mode === m ? "#fff" : "#64748b",
+                textTransform: "capitalize",
+              }}
+            >
+              {m.charAt(0).toUpperCase() + m.slice(1)}
+            </button>
+          ))}
+        </div>
+
         <div style={s.spacer} />
 
         {/* ── View ── */}
@@ -558,11 +743,18 @@ export default function App() {
           open={openMenu === "view"}
           onToggle={() => setOpenMenu((m) => m === "view" ? null : "view")}
         >
-          <MenuItem onClick={() => { setProcessOnly(false); setSelected(null); setSummaryPane(null); setOpenMenu(null); }}>
-            {!processOnly ? "✓ " : "  "}Full DAG
+          <MenuItem onClick={() => { setGraphView("process"); setSelected(null); setSummaryPane(null); setFailureIdx(0); setOpenMenu(null); }}>
+            {graphView === "process" ? "✓ " : "  "}Process view
           </MenuItem>
-          <MenuItem onClick={() => { setProcessOnly(true); setSelected(null); setSummaryPane(null); setOpenMenu(null); }}>
-            {processOnly ? "✓ " : "  "}Process only
+          <MenuItem onClick={() => { setGraphView("full"); setSelected(null); setSummaryPane(null); setFailureIdx(0); setOpenMenu(null); }}>
+            {graphView === "full" ? "✓ " : "  "}Full DAG view
+          </MenuItem>
+          <MenuDivider />
+          <MenuItem onClick={() => { setLayout("dag"); setOpenMenu(null); }}>
+            {layout === "dag" ? "✓ " : "  "}DAG layout
+          </MenuItem>
+          <MenuItem onClick={() => { setLayout("force"); setOpenMenu(null); }}>
+            {layout === "force" ? "✓ " : "  "}Force layout
           </MenuItem>
         </DropdownMenu>
 
@@ -615,7 +807,54 @@ export default function App() {
         <input ref={fileRef} type="file" accept=".dot,text/plain" style={{ display: "none" }} onChange={handleFile} />
       </div>
 
-      {/* ── Info strip ── */}
+      {/* ── Workbench mode ── */}
+      {mode === "workbench" && (
+        <div style={{ flex: 1, overflowY: "auto", background: "#0f1117", padding: "32px 40px" }}>
+          <div style={{ maxWidth: 680, margin: "0 auto" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>nf-core Workbench</div>
+            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 24 }}>Configure and launch approved nf-core workflows locally</div>
+
+            {/* nf-core/demo — runnable */}
+            <div style={{ background: "#131620", border: "1px solid #2d3148", borderRadius: 8, padding: "18px 20px", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>nf-core/demo</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: "2px 6px", borderRadius: 3, background: "#14532d", color: "#86efac", border: "1px solid #16a34a" }}>Runnable</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#64748b" }}>Small nf-core demo pipeline for local testing</div>
+              </div>
+              <button
+                onClick={() => launchRun()}
+                disabled={running || loading}
+                style={{ padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: running || loading ? "not-allowed" : "pointer", border: "1px solid #16a34a", background: "#14532d", color: "#86efac", opacity: running || loading ? 0.6 : 1, flexShrink: 0 }}
+              >
+                {running ? "Running…" : "Run"}
+              </button>
+            </div>
+
+            {/* nf-core/rnaseq — test profile */}
+            <div style={{ background: "#131620", border: "1px solid #2d3148", borderRadius: 8, padding: "18px 20px", display: "flex", alignItems: "center", gap: 16 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>nf-core/rnaseq</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: "2px 6px", borderRadius: 3, background: "#14532d", color: "#86efac", border: "1px solid #16a34a" }}>Runnable</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#64748b" }}>RNA-seq analysis workflow from nf-core</div>
+              </div>
+              <button
+                onClick={() => launchRun({ endpoint: "/api/runs/nf-core-rnaseq-test", templateId: "nf-core-rnaseq", displayName: "nf-core/rnaseq" })}
+                disabled={running || loading}
+                style={{ padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: running || loading ? "not-allowed" : "pointer", border: "1px solid #16a34a", background: "#14532d", color: "#86efac", opacity: running || loading ? 0.6 : 1, flexShrink: 0 }}
+              >
+                {running ? "Running…" : "Run test profile"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Info strip + body (Debugger mode) ── */}
+      {mode === "debugger" && <>
       <div style={s.infoStrip}>
         <div style={s.infoTitle}>GenoLoom Flow Viewer</div>
         <div style={s.infoSub}>
@@ -685,13 +924,14 @@ export default function App() {
         ) : activeRun ? (
           <>
             <Graph
-              nodes={activeRun.nodes}
-              edges={activeRun.edges}
+              nodes={displayGraph.nodes}
+              edges={displayGraph.edges}
               selectedId={selected?.id ?? null}
               onSelect={handleSelectNode}
               onDeselect={() => { setSelected(null); setSummaryPane(null); }}
-              processOnly={processOnly}
+              processOnly={graphView === "full" ? processOnly : false}
               centreKey={centreKey}
+              layout={layout}
               statusBanner={localRunBanner}
             />
             {summaryPane && (
@@ -700,6 +940,8 @@ export default function App() {
                 onClose={() => setSummaryPane(null)}
                 node={selected}
                 run={activeRun}
+                onOpenPane={handleOpenSummary}
+                onSelectTask={handleSelectTask}
               />
             )}
             <NodeInspector
@@ -707,6 +949,8 @@ export default function App() {
               run={activeRun}
               onDeselect={() => { setSelected(null); setSummaryPane(null); }}
               onOpenSummary={handleOpenSummary}
+              rootCause={rootCauseNode}
+              onJumpToNode={jumpToNode}
             />
           </>
         ) : (
@@ -736,8 +980,28 @@ export default function App() {
           </button>
         )}
 
+        {/* Process node count detail */}
+        {graphView === "process" && selected?.taskCount !== undefined && (
+          <div style={{
+            position: "absolute", bottom: 20, right: 12, zIndex: 10,
+            background: "rgba(19,22,32,0.95)", border: "1px solid #2d3148",
+            borderRadius: 6, padding: "10px 14px", fontSize: 12,
+            color: "#e2e8f0", lineHeight: 1.8, pointerEvents: "none",
+          }}>
+            <div style={{ fontWeight: 600, color: "#94a3b8", fontSize: 11, marginBottom: 2 }}>
+              {selected.label}
+            </div>
+            <div>Tasks: {selected.taskCount}</div>
+            {!!selected.completedCount && <div style={{ color: "#22c55e" }}>{selected.completedCount} completed</div>}
+            {!!selected.failedCount    && <div style={{ color: "#ef4444" }}>{selected.failedCount} failed</div>}
+            {!!selected.runningCount   && <div style={{ color: "#f59e0b" }}>{selected.runningCount} running</div>}
+            {!!selected.unknownCount   && <div style={{ color: "#9ca3af" }}>{selected.unknownCount} unknown</div>}
+          </div>
+        )}
+
         {error && <div style={s.errorBanner}>{error}</div>}
       </div>
+      </>}
 
       <div style={s.footer}>Built by Philip Lobb • GenoLoom</div>
     </div>

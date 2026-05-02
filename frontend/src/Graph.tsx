@@ -1,11 +1,10 @@
 import { useEffect, useRef, ReactNode } from "react";
 import * as d3 from "d3";
+import dagre from "dagre";
 import { WorkflowNode, WorkflowEdge } from "./types";
 
 const NODE_R = 22;
 const NODE_R_HOVER = 28;
-const H_SPACING = 200;
-const V_SPACING = 100;
 
 const STATUS_COLOUR: Record<string, string> = {
   COMPLETED: "#22c55e",
@@ -67,62 +66,130 @@ function filterGraph(
 }
 // ---- End process-only filter ------------------------------------------------
 
-// ---- Layered DAG layout (left-to-right, deterministic) ----------------------
-// To revert to force layout: replace computeLayeredLayout with d3.forceSimulation,
-// wire up a tick handler, and change LayoutNode back to SimulationNodeDatum.
-function computeLayeredLayout(
+// ---- DAG layout via dagre (left-to-right, minimises edge crossings) ---------
+function computeDagreLayout(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
   width: number,
   height: number,
 ): LayoutNode[] {
-  // Build adjacency and in-degree maps
-  const children = new Map<string, string[]>(nodes.map((n) => [n.id, []]));
-  const inDegree = new Map<string, number>(nodes.map((n) => [n.id, 0]));
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "LR", align: "UL", ranksep: 150, nodesep: 55, marginx: 40, marginy: 40 });
+  g.setDefaultEdgeLabel(() => ({}));
+  // Extra height budget so dagre reserves space for the label below each circle
+  for (const n of nodes) g.setNode(n.id, { width: NODE_R * 2, height: NODE_R * 2 + 22 });
+  for (const e of edges) g.setEdge(e.source, e.target);
+  dagre.layout(g);
 
+  // Offset positions so the graph bbox is centred in the SVG viewport
+  const gw = g.graph().width  ?? 0;
+  const gh = g.graph().height ?? 0;
+  const ox = (width  - gw) / 2;
+  const oy = (height - gh) / 2;
+
+  const base = nodes.map((n) => {
+    const pos = g.node(n.id);
+    return { ...n, x: (pos?.x ?? 0) + ox, y: (pos?.y ?? 0) + oy };
+  });
+
+  // ── Diagonal drift: nodes further right sit slightly lower, giving a
+  //    top-left → bottom-right reading direction without distorting the layout.
+  const xs     = base.map((n) => n.x);
+  const xMin   = Math.min(...xs);
+  const xRange = (Math.max(...xs) - xMin) || 1;
+  const DRIFT  = 35;  // max extra y-offset at the rightmost rank (px)
+  const BIAS   = 18;  // nudge for known start / end nodes (px)
+
+  const isStart = (l: string) => l === "Input" || /fromFilePairs/i.test(l);
+  const isEnd   = (l: string) => /MULTIQC|REPORT|OUTPUT|TIMELINE/i.test(l);
+
+  return base.map((n) => {
+    const xFrac = (n.x - xMin) / xRange;
+    let dx = 0;
+    let dy = xFrac * DRIFT;
+    if (isStart(n.label)) { dx -= BIAS; dy -= BIAS; }
+    if (isEnd(n.label))   { dx += BIAS; dy += BIAS; }
+    return { ...n, x: n.x + dx, y: n.y + dy };
+  });
+}
+// ---- End DAG layout ---------------------------------------------------------
+
+// ---- Force-directed layout (pre-warmed, static result) ----------------------
+function computeForceLayout(
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+  width: number,
+  height: number,
+): LayoutNode[] {
+  type FNode = WorkflowNode & d3.SimulationNodeDatum;
+  // Seed on a circle so the simulation converges cleanly
+  const simNodes: FNode[] = nodes.map((n, i) => ({
+    ...n,
+    x: width  / 2 + Math.cos((2 * Math.PI * i) / nodes.length) * 120,
+    y: height / 2 + Math.sin((2 * Math.PI * i) / nodes.length) * 120,
+  }));
+
+  const links = edges
+    .filter((e) => simNodes.some((n) => n.id === e.source) && simNodes.some((n) => n.id === e.target))
+    .map((e) => ({ source: e.source, target: e.target }));
+
+  const sim = d3.forceSimulation(simNodes)
+    .force("link",    d3.forceLink(links).id((d) => (d as FNode).id).distance(150).strength(0.8))
+    .force("charge",  d3.forceManyBody().strength(-400))
+    .force("center",  d3.forceCenter(width / 2, height / 2))
+    .force("collide", d3.forceCollide(NODE_R + 10))
+    .stop();
+
+  for (let i = 0; i < 300; i++) sim.tick();
+
+  return simNodes.map((n) => ({ ...n, x: n.x ?? width / 2, y: n.y ?? height / 2 }));
+}
+// ---- End force layout -------------------------------------------------------
+
+// ---- Failure-path traversal -------------------------------------------------
+function getAncestors(nodeId: string, edges: WorkflowEdge[]): Set<string> {
+  const parents = new Map<string, string[]>();
   for (const e of edges) {
-    children.get(e.source)?.push(e.target);
-    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
+    if (!parents.has(e.target)) parents.set(e.target, []);
+    parents.get(e.target)!.push(e.source);
   }
-
-  // Kahn's topological sort — propagate max depth to each child
-  const depth = new Map<string, number>(nodes.map((n) => [n.id, 0]));
-  const remaining = new Map(inDegree);
-  const queue: string[] = nodes
-    .filter((n) => inDegree.get(n.id) === 0)
-    .map((n) => n.id);
-
+  const result = new Set<string>();
+  const queue = [...(parents.get(nodeId) ?? [])];
   while (queue.length > 0) {
     const id = queue.shift()!;
-    for (const child of children.get(id) ?? []) {
-      const candidate = depth.get(id)! + 1;
-      if (candidate > depth.get(child)!) depth.set(child, candidate);
-      remaining.set(child, remaining.get(child)! - 1);
-      if (remaining.get(child) === 0) queue.push(child);
-    }
+    if (result.has(id)) continue;
+    result.add(id);
+    queue.push(...(parents.get(id) ?? []));
   }
-
-  // Group node ids by depth (column)
-  const layers = new Map<number, string[]>();
-  for (const [id, d] of depth) {
-    if (!layers.has(d)) layers.set(d, []);
-    layers.get(d)!.push(id);
-  }
-
-  // Assign x/y — columns spread left-to-right, rows centred vertically
-  const posById = new Map<string, { x: number; y: number }>();
-  const leftPad = 60;
-
-  for (const [d, ids] of layers) {
-    const x = leftPad + d * H_SPACING;
-    const colHeight = (ids.length - 1) * V_SPACING;
-    const top = height / 2 - colHeight / 2;
-    ids.forEach((id, i) => posById.set(id, { x, y: top + i * V_SPACING }));
-  }
-
-  return nodes.map((n) => ({ ...n, ...posById.get(n.id)! }));
+  return result;
 }
-// ---- End layered layout -----------------------------------------------------
+
+function getDescendants(nodeId: string, edges: WorkflowEdge[]): Set<string> {
+  const children = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!children.has(e.source)) children.set(e.source, []);
+    children.get(e.source)!.push(e.target);
+  }
+  const result = new Set<string>();
+  const queue = [...(children.get(nodeId) ?? [])];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (result.has(id)) continue;
+    result.add(id);
+    queue.push(...(children.get(id) ?? []));
+  }
+  return result;
+}
+// ---- End failure-path traversal ---------------------------------------------
+
+// Take the last colon-separated segment of nf-core qualified names (e.g.
+// "NFCORE_RNASEQ:RNASEQ:PREPARE_GENOME:GUNZIP_GTF" → "GUNZIP_GTF").
+// Falls back to the full label, then truncates to 20 chars to prevent overlap.
+function displayLabel(label: string): string {
+  const parts = label.split(":");
+  const name = (parts[parts.length - 1].trim()) || label;
+  return name.length > 20 ? name.slice(0, 19) + "…" : name;
+}
 
 type Props = {
   nodes: WorkflowNode[];
@@ -132,10 +199,11 @@ type Props = {
   onDeselect: () => void;
   processOnly: boolean;
   centreKey: number;
+  layout: "force" | "dag";
   statusBanner?: ReactNode;
 };
 
-export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, processOnly, centreKey, statusBanner }: Props) {
+export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, processOnly, centreKey, layout, statusBanner }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const lastCentreKeyRef = useRef(0);
   // Tracks previous node statuses to detect changes between renders for ripple animation
@@ -178,8 +246,35 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
       .style("z-index", "9999");
 
     const { nodes: visibleNodes, edges: visibleEdges } = filterGraph(nodes, edges, processOnly);
-    const layoutNodes = computeLayeredLayout(visibleNodes, visibleEdges, width, height);
+    const layoutNodes = layout === "force"
+      ? computeForceLayout(visibleNodes, visibleEdges, width, height)
+      : computeDagreLayout(visibleNodes, visibleEdges, width, height);
     const nodeById = new Map(layoutNodes.map((n) => [n.id, n]));
+
+    // ── Failure-path sets ─────────────────────────────────────────────────────
+    const selectedNode = selectedId ? nodeById.get(selectedId) : null;
+    const isFailed     = selectedNode?.status === "FAILED";
+
+    const upstreamIds = isFailed && selectedId
+      ? getAncestors(selectedId, visibleEdges)
+      : new Set<string>();
+
+    const downstreamIds = isFailed && selectedId
+      ? getDescendants(selectedId, visibleEdges)
+      : selectedId
+        ? new Set(visibleEdges.filter((e) => e.source === selectedId).map((e) => e.target))
+        : new Set<string>();
+
+    // Edges where both endpoints are on the failure path
+    const pathNodeIds  = isFailed && selectedId
+      ? new Set([...upstreamIds, selectedId, ...downstreamIds])
+      : new Set<string>();
+    const pathEdgeKeys = new Set(
+      visibleEdges
+        .filter((e) => pathNodeIds.has(e.source) && pathNodeIds.has(e.target))
+        .map((e) => `${e.source}->${e.target}`),
+    );
+    // ─────────────────────────────────────────────────────────────────────────
 
     const layoutLinks: LayoutLink[] = visibleEdges
       .map((e) => ({ source: nodeById.get(e.source)!, target: nodeById.get(e.target)! }))
@@ -219,29 +314,31 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
       .attr("orient", "auto")
       .append("path")
       .attr("d", "M0,-5L10,0L0,5")
-      .attr("fill", "#4b5563");
+      .attr("fill", "#374151");
 
     g.append("g")
       .selectAll("line")
       .data(layoutLinks)
       .join("line")
-      .attr("stroke", "#4b5563")
-      .attr("stroke-width", 1.5)
+      .attr("stroke", (d) =>
+        isFailed && pathEdgeKeys.has(`${d.source.id}->${d.target.id}`) ? "#64748b" : "#374151")
+      .attr("stroke-width", 1)
+      .attr("stroke-opacity", (d) => {
+        if (!isFailed) return 0.25;
+        return pathEdgeKeys.has(`${d.source.id}->${d.target.id}`) ? 0.65 : 0.06;
+      })
       .attr("marker-end", "url(#arrow)")
       .attr("x1", (d) => d.source.x)
       .attr("y1", (d) => d.source.y)
       .attr("x2", (d) => d.target.x)
       .attr("y2", (d) => d.target.y);
 
-    const downstreamIds = selectedId
-      ? new Set(visibleEdges.filter((e) => e.source === selectedId).map((e) => e.target))
-      : new Set<string>();
-
     const nodeRole = (d: LayoutNode) => {
-      if (d.id === selectedId) return "selected";
-      if (downstreamIds.has(d.id)) return "downstream";
-      if (selectedId) return "dimmed";
-      return "normal";
+      if (d.id === selectedId)              return "selected";
+      if (!selectedId)                       return "normal";
+      if (isFailed && upstreamIds.has(d.id)) return "upstream";
+      if (downstreamIds.has(d.id))           return "downstream";
+      return "dimmed";
     };
 
     const nodeGroup = g
@@ -251,7 +348,13 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
       .join("g")
       .attr("transform", (d) => `translate(${d.x},${d.y})`)
       .style("cursor", "pointer")
-      .style("opacity", (d) => (nodeRole(d) === "dimmed" ? 0.25 : 1))
+      .style("opacity", (d) => {
+        const role = nodeRole(d);
+        if (role === "dimmed")     return isFailed ? 0.1 : 0.25;
+        if (role === "upstream")   return 0.8;
+        if (role === "downstream") return isFailed ? 0.75 : 1;
+        return 1;
+      })
       .on("click", (event, d) => { event.stopPropagation(); onSelect(d); })
       .on("mouseenter", function (_event, d) {
         d3.select(this).select("circle").transition().duration(120).attr("r", NODE_R_HOVER);
@@ -273,25 +376,52 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
       .attr("fill", (d) => STATUS_COLOUR[d.status ?? "UNKNOWN"])
       .attr("stroke", (d) => {
         const role = nodeRole(d);
-        if (role === "selected") return "#f8fafc";
-        if (role === "downstream") return "#f59e0b";
+        if (role === "selected")   return "#f8fafc";
+        if (role === "upstream")   return "#fbbf24";
+        if (role === "downstream") return isFailed ? "#f97316" : "#f59e0b";
         return "transparent";
       })
-      .attr("stroke-width", 3)
+      .attr("stroke-width", (d) => {
+        const role = nodeRole(d);
+        if (role === "selected") return 3;
+        if ((role === "upstream" || role === "downstream") && isFailed) return 1.5;
+        if (role === "downstream" && !isFailed) return 3;
+        return 0;
+      })
       .style("filter", (d) => {
         const role = nodeRole(d);
-        if (role === "selected") return "drop-shadow(0 0 6px #f8fafc88)";
-        if (role === "downstream") return "drop-shadow(0 0 6px #f59e0b88)";
+        if (role === "selected") return isFailed
+          ? "drop-shadow(0 0 8px #ef444488)"
+          : "drop-shadow(0 0 6px #f8fafc88)";
+        if (role === "downstream" && !isFailed) return "drop-shadow(0 0 6px #f59e0b88)";
         return "none";
       });
 
     nodeGroup
       .append("text")
-      .text((d) => d.label)
+      .text((d) => displayLabel(d.label))
       .attr("text-anchor", "middle")
       .attr("dy", 36)
       .attr("fill", "#e2e8f0")
-      .attr("font-size", 11)
+      .attr("font-size", 10)
+      .attr("font-family", "system-ui, sans-serif")
+      .style("pointer-events", "none");
+
+    // Task count badge for process nodes (taskCount only present in Process view)
+    nodeGroup
+      .filter((d) => d.taskCount !== undefined)
+      .append("text")
+      .text((d) => {
+        const done   = d.completedCount ?? 0;
+        const total  = d.taskCount!;
+        const failed = d.failedCount    ?? 0;
+        return failed > 0 ? `${done}/${total} · ${failed} failed` : `${done}/${total}`;
+      })
+      .attr("text-anchor", "middle")
+      .attr("dy", 48)
+      .attr("fill", (d) => (d.failedCount ?? 0) > 0 ? "#ef4444" : "#94a3b8")
+      .attr("font-size", 12)
+      .attr("font-weight", 500)
       .attr("font-family", "system-ui, sans-serif")
       .style("pointer-events", "none");
 
@@ -315,7 +445,7 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
     }
 
     return () => { tooltip.remove(); };
-  }, [nodes, edges, selectedId, onSelect, onDeselect, processOnly, centreKey]);
+  }, [nodes, edges, selectedId, onSelect, onDeselect, processOnly, centreKey, layout]);
 
   const legend = [
     { colour: "#22c55e", label: "Completed" },
@@ -323,6 +453,9 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
     { colour: "#f59e0b", label: "Running" },
     { colour: "#9ca3af", label: "Unknown" },
   ];
+
+  const selectedNodeFailed =
+    !!selectedId && nodes.find((n) => n.id === selectedId)?.status === "FAILED";
 
   return (
     <div style={{ flex: 1, position: "relative", background: "#0f1117" }}>
@@ -341,6 +474,22 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
           {statusBanner}
         </div>
       )}
+      {selectedNodeFailed && (
+        <div style={{
+          position: "absolute", bottom: 100, left: 0, right: 0,
+          display: "flex", justifyContent: "center",
+          pointerEvents: "none", zIndex: 4,
+        }}>
+          <div style={{
+            fontSize: 11, color: "#94a3b8",
+            background: "rgba(15,17,23,0.85)", border: "1px solid #2d3148",
+            borderRadius: 10, padding: "4px 12px",
+          }}>
+            Failure path: upstream inputs and downstream affected steps highlighted
+          </div>
+        </div>
+      )}
+
       <div
         style={{
           position: "absolute",

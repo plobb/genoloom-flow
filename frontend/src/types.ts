@@ -13,6 +13,13 @@ export type WorkflowNode = {
   duration?: string;
   cpus?: number;
   memory?: string;
+  // Process-view aggregate fields (only present on derived process nodes)
+  taskCount?: number;
+  completedCount?: number;
+  failedCount?: number;
+  runningCount?: number;
+  unknownCount?: number;
+  childNodeIds?: string[];
   // Trace fields
   hash?: string;
   task_id?: string;
@@ -64,7 +71,8 @@ export type SummaryPane =
   | { type: "debug-summary"; nodeId: string }
   | { type: "report"; runId: string }
   | { type: "timeline"; runId: string }
-  | { type: "file"; label: string; path: string };
+  | { type: "file"; label: string; path: string }
+  | { type: "task-list"; processLabel: string; tasks: WorkflowNode[] };
 
 export type WorkflowRun = {
   id: string;
@@ -79,4 +87,6 @@ export type WorkflowRun = {
   // Only populated for local-nextflow runs
   dagAvailable?: boolean;
   traceAvailable?: boolean;
+  reportAvailable?: boolean;
+  timelineAvailable?: boolean;
 };

@@ -34,9 +34,11 @@ type Props = {
   run?: WorkflowRun | null;
   onDeselect?: () => void;
   onOpenSummary?: (pane: SummaryPane) => void;
+  rootCause?: WorkflowNode | null;
+  onJumpToNode?: (node: WorkflowNode) => void;
 };
 
-export default function NodeInspector({ node, run, onDeselect, onOpenSummary }: Props) {
+export default function NodeInspector({ node, run, onDeselect, onOpenSummary, rootCause, onJumpToNode }: Props) {
   const [deselectHover, setDeselectHover] = useState(false);
 
   const styles: Record<string, React.CSSProperties> = {
@@ -171,22 +173,26 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary }: 
             <span style={styles.value}>{v}</span>
           </div>
         ))}
-        {isLocal && onOpenSummary && (
+        {isLocal && onOpenSummary && (run.reportAvailable || run.timelineAvailable) && (
           <>
             <div style={styles.sectionLabel}>Artefacts</div>
             <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-              <button
-                style={styles.fileBtn}
-                onClick={() => onOpenSummary({ type: "report", runId: run.id })}
-              >
-                Report
-              </button>
-              <button
-                style={styles.fileBtn}
-                onClick={() => onOpenSummary({ type: "timeline", runId: run.id })}
-              >
-                Timeline
-              </button>
+              {run.reportAvailable && (
+                <button
+                  style={styles.fileBtn}
+                  onClick={() => onOpenSummary({ type: "report", runId: run.id })}
+                >
+                  Report
+                </button>
+              )}
+              {run.timelineAvailable && (
+                <button
+                  style={styles.fileBtn}
+                  onClick={() => onOpenSummary({ type: "timeline", runId: run.id })}
+                >
+                  Timeline
+                </button>
+              )}
             </div>
           </>
         )}
@@ -238,6 +244,18 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary }: 
 
   const hasPathSection = node.workDir || fileButtons.length > 0;
 
+  // Resolve child task nodes for process nodes (childNodeIds reference raw run.nodes)
+  const childTasks: WorkflowNode[] = (node.childNodeIds && run?.nodes)
+    ? node.childNodeIds.flatMap((id) => { const t = run!.nodes.find((n) => n.id === id); return t ? [t] : []; })
+    : [];
+  const singleTaskFiles = childTasks.length === 1
+    ? [
+        { label: "Command", path: childTasks[0].commandPath },
+        { label: "Stdout",  path: childTasks[0].stdoutPath },
+        { label: "Stderr",  path: childTasks[0].stderrPath },
+      ].filter((f): f is { label: string; path: string } => !!f.path)
+    : [];
+
   return (
     <div style={styles.panel}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -257,7 +275,73 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary }: 
         <span style={{ ...styles.badge, background: colour }}>{node.status}</span>
       )}
 
-      {onOpenSummary && node.status && (
+      {node.status === "FAILED" && rootCause !== undefined && (
+        <>
+          <div style={styles.sectionLabel}>Root cause</div>
+          {rootCause === null ? (
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 10, lineHeight: 1.5 }}>
+              This appears to be the first failed step.
+            </div>
+          ) : (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>
+                Candidate: <span style={{ color: "#fbbf24" }}>{rootCause.label}</span>
+              </div>
+              {onJumpToNode && (
+                <button
+                  style={styles.summaryBtn}
+                  onClick={() => onJumpToNode(rootCause)}
+                >
+                  Jump to root cause
+                </button>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {node.taskCount !== undefined && (
+        <>
+          <div style={styles.sectionLabel}>Process</div>
+          {([
+            ["Total tasks", node.taskCount],
+            ["Completed",   node.completedCount ?? 0],
+            ["Running",     node.runningCount   ?? 0],
+            ["Failed",      node.failedCount    ?? 0],
+            ["Unknown",     node.unknownCount   ?? 0],
+          ] as Row[]).map(renderRow)}
+        </>
+      )}
+
+      {node.taskCount !== undefined && onOpenSummary && (
+        <>
+          {childTasks.length === 1 && singleTaskFiles.length > 0 && (
+            <>
+              <div style={styles.sectionLabel}>Task files</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, marginBottom: 8 }}>
+                {singleTaskFiles.map(({ label, path }) => (
+                  <button key={label} style={styles.fileBtn} onClick={() => onOpenSummary({ type: "file", label, path })}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          {childTasks.length > 1 && (
+            <>
+              <div style={styles.sectionLabel}>Tasks</div>
+              <button
+                style={styles.summaryBtn}
+                onClick={() => onOpenSummary({ type: "task-list", processLabel: node.label, tasks: childTasks })}
+              >
+                View tasks ({childTasks.length})
+              </button>
+            </>
+          )}
+        </>
+      )}
+
+      {onOpenSummary && node.status && node.taskCount === undefined && (
         <button
           style={styles.summaryBtn}
           onClick={() => onOpenSummary({ type: "debug-summary", nodeId: node.id })}
