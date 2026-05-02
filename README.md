@@ -87,9 +87,7 @@ GenoLoom Flow brings all of this into a single visual debugging surface so you c
 
 ## Demo
 
-👉 Demo script (coming soon)  
-`docs/demo-script.md`
-
+👉 [Demo script](docs/demo-script.md)
 ---
 
 ## Demo modes
