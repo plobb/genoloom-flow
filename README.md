@@ -6,7 +6,7 @@
 
 **Debug Nextflow pipelines. Instantly.**
 
-GenoLoom Flow is a local-first Nextflow workflow visualiser and debugger. It helps you inspect pipeline structure, follow execution state, identify failed steps, and view run artefacts without constantly jumping between the terminal, work directories, reports, and logs.
+GenoLoom Flow is a local-first Nextflow workflow visualiser, debugger, and lightweight nf-core workbench. It helps you inspect pipeline structure, follow execution state, identify failures, and explore run artefacts without jumping between terminals, work directories, and reports.
 
 ---
 
@@ -15,95 +15,95 @@ GenoLoom Flow is a local-first Nextflow workflow visualiser and debugger. It hel
 GenoLoom Flow helps you:
 
 - Visualise Nextflow DAGs interactively
+- Switch between **Process view** and **Full DAG view**
 - Track task status across a run
-- Identify failed or incomplete workflow steps
-- Inspect node-level execution details
-- View command, stdout, stderr, reports, and timelines in context
-- Run local nf-core demo workflows
-- Compare uploaded, simulated, sample, and local runs in one interface
+- Identify failed steps and follow failure paths
+- Jump directly to **root cause** nodes
+- Drill down from process → task → logs
+- Inspect command, stdout, stderr inline
+- View Nextflow reports and timelines in-app
+- Run local nf-core workflows (demo + rnaseq test)
+- Compare multiple runs side-by-side
 
 ---
 
 ## Why
 
-Nextflow pipelines are powerful, but debugging them can be awkward.
+Debugging Nextflow pipelines is fragmented.
 
-When something fails, useful information is often scattered across:
+When something fails, useful information is scattered across:
 
-- `dag.dot`
-- `trace.txt`
-- `.command.sh`
-- `.command.out`
-- `.command.err`
-- `report.html`
-- `timeline.html`
+- dag.dot
+- trace.txt
+- .command.sh
+- .command.out
+- .command.err
+- report.html
+- timeline.html
 - the Nextflow work directory
 
-GenoLoom Flow brings those pieces into a single visual debugging surface so you can move faster from failure to fix.
+GenoLoom Flow brings all of this into a single visual debugging surface so you can move quickly from **failure → understanding → fix**.
 
 ---
 
-## Current features
+## Key features
 
-- Interactive D3 workflow graph
-- Upload and explore `dag.dot`
-- Optional `trace.txt` status overlay
-- Simulated demo workflow with live visual updates
-- Local `nf-core/demo` execution
-- Multiple run management
-- Run source labels for sample, upload, demo, and local Nextflow runs
-- Node inspector with execution metadata
-- Embedded Nextflow report and timeline views
-- In-app command, stdout, and stderr viewing
-- Failed-node summary pane with suggested next checks
+### Graph views
+
+- **Process view**: clean, high-level overview
+- **Full DAG view**: task-level detail
+- Seamless switching between both
+
+### Failure debugging
+
+- Follow failure paths through the workflow
+- Highlight upstream/downstream context
+- Root-cause detection with jump navigation
+
+### Task drill-down
+
+- Expand a process into its constituent tasks
+- Click a task to jump to its exact node
+- Hover tasks to highlight their position in the graph
+
+### Artefact inspection
+
+- View:
+  - Command
+  - Stdout
+  - Stderr
+  - Report
+  - Timeline
+- All inside the app, no context switching
+
+### Local execution
+
+- Run:
+  - nf-core/demo
+  - nf-core/rnaseq (test profile)
+- Automatically capture DAG, trace, and artefacts
+
+---
+
+## Demo
+
+👉 Demo script (coming soon)  
+`docs/demo-script.md`
 
 ---
 
 ## Demo modes
 
-GenoLoom Flow currently supports three main ways to explore a workflow.
-
 ### Sample run
-
 Loads a bundled example graph and trace.
 
 ### Simulated workflow
+Frontend-only demo with animated node updates.
 
-Runs a frontend-only demo that animates node state changes. This is useful for demonstrations because it does not require compute.
-
-### Local nf-core demo
-
-Runs `nf-core/demo` locally through the backend and watches for Nextflow outputs such as `dag.dot`, `trace.txt`, `report.html`, and `timeline.html`.
-
----
-
-## Screenshots
-
-Coming soon.
-
----
-
-## Roadmap
-
-Planned areas of development:
-
-- Better live trace polling
-- Improved failed-task error extraction
-- Full nf-core workflow catalogue support
-- Workflow parameter forms based on `nextflow_schema.json`
-- Containerised local deployment
-- Token-based authentication
-- AWS execution support
-- Optional LLM-assisted error interpretation
-
----
-
-## Requirements
-
-- Python 3.10+
-- Node.js 18+
-- Nextflow, for local workflow execution
-- Docker, for the local nf-core demo profile
+### Local nf-core workflows
+Runs real pipelines locally and visualises execution:
+- nf-core/demo
+- nf-core/rnaseq (test)
 
 ---
 
@@ -111,23 +111,18 @@ Planned areas of development:
 
 ### Backend
 
-From the project root:
-
 ```bash
 cd backend
 pip install -r requirements.txt
 uvicorn app:app --reload
 ```
 
-The backend runs at:
-
-```text
+Backend:
+```
 http://localhost:8000
 ```
 
 ### Frontend
-
-In a second terminal:
 
 ```bash
 cd frontend
@@ -135,9 +130,8 @@ npm install
 npm run dev
 ```
 
-The frontend runs at:
-
-```text
+Frontend:
+```
 http://localhost:5173
 ```
 
@@ -145,18 +139,18 @@ http://localhost:5173
 
 ## Typical workflow
 
-1. Start the backend.
-2. Start the frontend.
-3. Open `http://localhost:5173`.
-4. Load a sample run, upload a DAG, run the simulated workflow, or launch `nf-core/demo`.
-5. Click nodes to inspect task details.
-6. Open reports, timelines, commands, stdout, and stderr inside the app.
+1. Start backend and frontend
+2. Open http://localhost:5173
+3. Run or load a workflow
+4. Switch to Process view
+5. Identify a failed node
+6. Jump to root cause
+7. Drill into tasks
+8. Inspect logs and outputs
 
 ---
 
-## Useful Nextflow outputs
-
-You can generate files for upload with:
+## Generating Nextflow artefacts
 
 ```bash
 nextflow run <pipeline> \
@@ -168,11 +162,15 @@ nextflow run <pipeline> \
 
 ---
 
-## Development notes
+## Roadmap
 
-This project is currently focused on local-first debugging and safe approved workflow execution.
-
-It does not currently aim to execute arbitrary user-supplied shell commands from the browser.
+- Live trace streaming
+- Improved error extraction
+- nf-core catalogue integration
+- Parameter UI (nextflow_schema.json)
+- Containerised deployment
+- Cloud execution (AWS)
+- Optional LLM-assisted debugging
 
 ---
 
