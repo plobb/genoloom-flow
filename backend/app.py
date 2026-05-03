@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -37,6 +38,17 @@ _ARTEFACTS = {
     "stdout":   "stdout.txt",
     "stderr":   "stderr.txt",
 }
+
+
+def _read_meta(run_dir: Path) -> dict:
+    """Read meta.json from a run directory; return empty dict if absent or invalid."""
+    meta_path = run_dir / "meta.json"
+    if meta_path.exists():
+        try:
+            return json.loads(meta_path.read_text())
+        except Exception:
+            pass
+    return {}
 
 
 def _normalise(name: str) -> str:
@@ -162,18 +174,27 @@ def read_task_file(path: str = Query(...)) -> PlainTextResponse:
 
 @app.get("/api/runs")
 def list_runs():
-    """List all run directories and report which artefacts are present."""
+    """List all run directories with metadata and artefact availability."""
     if not _RUNS_DIR.exists():
         return []
-    return [
-        {
-            "run_id":    d.name,
-            "run_dir":   str(d),
-            "artefacts": {key: (d / fname).exists() for key, fname in _ARTEFACTS.items()},
-        }
-        for d in sorted(_RUNS_DIR.iterdir())
-        if d.is_dir()
-    ]
+    result = []
+    for d in sorted(_RUNS_DIR.iterdir()):
+        if not d.is_dir():
+            continue
+        meta = _read_meta(d)
+        run_stat = get_run_status(d.name, d)
+        result.append({
+            "run_id":       d.name,
+            "run_dir":      str(d),
+            "display_name": meta.get("display_name"),
+            "workflow":     meta.get("workflow"),
+            "status":       run_stat["status"],
+            "source":       meta.get("source"),
+            "started":      meta.get("started"),
+            "completed":    meta.get("completed"),
+            "artefacts":    {key: (d / fname).exists() for key, fname in _ARTEFACTS.items()},
+        })
+    return result
 
 
 @app.get("/api/runs/{run_id}/status")

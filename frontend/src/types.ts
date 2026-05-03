@@ -49,6 +49,9 @@ export type WorkflowGraph = {
 export type RunSummary = {
   run_id: string;
   run_dir: string;
+  display_name?: string;
+  name?: string;
+  status?: string;
   artefacts: {
     dag: boolean;
     trace: boolean;

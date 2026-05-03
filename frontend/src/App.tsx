@@ -721,9 +721,11 @@ export default function App() {
               onChange={(e) => { if (e.target.value) loadRun(e.target.value); }}
             >
               <option value="">Past runs…</option>
-              {backendRuns.map((r) => (
-                <option key={r.run_id} value={r.run_id}>{r.run_id}</option>
-              ))}
+              {backendRuns.map((r) => {
+                const label = r.display_name ?? r.name ?? r.run_id.slice(0, 8);
+                const status = r.status ? ` · ${r.status.toLowerCase()}` : "";
+                return <option key={r.run_id} value={r.run_id}>{label}{status}</option>;
+              })}
             </select>
           </>
         )}

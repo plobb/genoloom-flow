@@ -1,8 +1,10 @@
 """Start a Nextflow run in a background thread and track its status."""
 
+import json
 import subprocess
 import threading
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -12,11 +14,29 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _ACTIVE_RUNS: dict[str, dict] = {}
 
 
+def _update_meta(run_dir: Path, updates: dict) -> None:
+    """Merge *updates* into meta.json in run_dir; safe to call from any thread."""
+    meta_path = run_dir / "meta.json"
+    try:
+        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        meta.update(updates)
+        meta_path.write_text(json.dumps(meta))
+    except Exception:
+        pass
+
+
 def run_nf_core_demo() -> dict:
     """Start nf-core/demo in a background thread and return the run_id immediately."""
     run_id = uuid.uuid4().hex[:12]
     run_dir = _PROJECT_ROOT / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    _update_meta(run_dir, {
+        "display_name": "nf-core/demo",
+        "workflow":     "nf-core/demo",
+        "source":       "local-nextflow",
+        "status":       "running",
+        "started":      datetime.now(timezone.utc).isoformat(),
+    })
 
     dag_path      = run_dir / "dag.dot"
     trace_path    = run_dir / "trace.txt"
@@ -49,15 +69,18 @@ def run_nf_core_demo() -> dict:
             )
             stdout_path.write_text(proc.stdout)
             stderr_path.write_text(proc.stderr)
+            final_status = "completed" if proc.returncode == 0 else "failed"
             _ACTIVE_RUNS[run_id]["return_code"] = proc.returncode
-            _ACTIVE_RUNS[run_id]["status"] = "completed" if proc.returncode == 0 else "failed"
+            _ACTIVE_RUNS[run_id]["status"] = final_status
         except FileNotFoundError:
             stdout_path.write_text("")
             stderr_path.write_text(
                 "nextflow executable not found — is Nextflow installed and on PATH?"
             )
+            final_status = "failed"
             _ACTIVE_RUNS[run_id]["return_code"] = -1
-            _ACTIVE_RUNS[run_id]["status"] = "failed"
+            _ACTIVE_RUNS[run_id]["status"] = final_status
+        _update_meta(run_dir, {"status": final_status, "completed": datetime.now(timezone.utc).isoformat()})
 
     threading.Thread(target=_execute, daemon=True).start()
 
@@ -74,6 +97,13 @@ def run_nf_core_rnaseq() -> dict:
     run_id = uuid.uuid4().hex[:12]
     run_dir = _PROJECT_ROOT / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    _update_meta(run_dir, {
+        "display_name": "nf-core/rnaseq",
+        "workflow":     "nf-core/rnaseq",
+        "source":       "local-nextflow",
+        "status":       "running",
+        "started":      datetime.now(timezone.utc).isoformat(),
+    })
 
     dag_path      = run_dir / "dag.dot"
     trace_path    = run_dir / "trace.txt"
@@ -106,15 +136,18 @@ def run_nf_core_rnaseq() -> dict:
             )
             stdout_path.write_text(proc.stdout)
             stderr_path.write_text(proc.stderr)
+            final_status = "completed" if proc.returncode == 0 else "failed"
             _ACTIVE_RUNS[run_id]["return_code"] = proc.returncode
-            _ACTIVE_RUNS[run_id]["status"] = "completed" if proc.returncode == 0 else "failed"
+            _ACTIVE_RUNS[run_id]["status"] = final_status
         except FileNotFoundError:
             stdout_path.write_text("")
             stderr_path.write_text(
                 "nextflow executable not found — is Nextflow installed and on PATH?"
             )
+            final_status = "failed"
             _ACTIVE_RUNS[run_id]["return_code"] = -1
-            _ACTIVE_RUNS[run_id]["status"] = "failed"
+            _ACTIVE_RUNS[run_id]["status"] = final_status
+        _update_meta(run_dir, {"status": final_status, "completed": datetime.now(timezone.utc).isoformat()})
 
     threading.Thread(target=_execute, daemon=True).start()
 
