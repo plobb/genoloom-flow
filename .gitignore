@@ -24,3 +24,4 @@ work/
 # Node
 frontend/node_modules/
 frontend/dist/
+*:Zone.Identifier

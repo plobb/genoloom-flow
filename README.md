@@ -160,6 +160,41 @@ nextflow run <pipeline> \
 
 ---
 
+## Docker local viewer mode
+
+Run the frontend and backend together without any local Python or Node setup:
+
+```bash
+docker compose up --build
+```
+
+| Service  | URL                     |
+|----------|-------------------------|
+| Frontend | http://localhost:5173   |
+| Backend  | http://localhost:8000   |
+
+**What works in this mode:**
+
+- Viewing the bundled sample run
+- Uploading a `dag.dot` (and optional `trace.txt`) to visualise any Nextflow run
+- Process view, task drill-down, root-cause detection, and summary panels
+
+**What does not work in this mode:**
+
+- Running nf-core pipelines (`Run` menu / Workbench) — Nextflow execution requires a native host setup with Nextflow and Docker installed. See [Running locally](#running-locally) for that workflow.
+
+The UI reflects this automatically: in Docker viewer mode (`VITE_VIEWER_MODE=true`) the **Run** menu trigger is greyed out and disabled, Workbench cards show a **View only** badge instead of **Runnable**, and a notice is displayed explaining why execution is unavailable.
+
+**Environment variables** (set in `docker-compose.yml`, override as needed):
+
+| Variable            | Default                   | Purpose                                         |
+|---------------------|---------------------------|-------------------------------------------------|
+| `VITE_API_URL`      | `http://localhost:8000`   | Backend URL seen by the browser                 |
+| `VITE_VIEWER_MODE`  | `true`                    | Disables pipeline execution controls in the UI  |
+| `CORS_ORIGINS`      | `http://localhost:5173`   | Origins the backend will accept                 |
+
+---
+
 ## Roadmap
 
 - Live trace streaming

@@ -12,9 +12,10 @@ from runners.nextflow_runner import run_nf_core_demo, run_nf_core_rnaseq, get_ru
 
 app = FastAPI(title="GenoLoom")
 
+_cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_cors_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

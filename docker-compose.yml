@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./runs:/app/runs
+      - ./work:/app/work
+      - ./sample_runs:/app/sample_runs
+    environment:
+      CORS_ORIGINS: "http://localhost:5173"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: "http://localhost:8000"
+      VITE_VIEWER_MODE: "true"
+    depends_on:
+      - backend

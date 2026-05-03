@@ -237,10 +237,10 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary, ro
   );
 
   const fileButtons = [
-    { label: "Command", path: node.commandPath },
-    { label: "Stdout",  path: node.stdoutPath },
-    { label: "Stderr",  path: node.stderrPath },
-  ].filter((b): b is { label: string; path: string } => !!b.path);
+    { label: "Command", path: node.commandPath, content: node.commandContent },
+    { label: "Stdout",  path: node.stdoutPath,  content: node.stdoutContent  },
+    { label: "Stderr",  path: node.stderrPath,  content: node.stderrContent  },
+  ].filter((b): b is { label: string; path: string; content: string | undefined } => !!b.path);
 
   const hasPathSection = node.workDir || fileButtons.length > 0;
 
@@ -250,10 +250,10 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary, ro
     : [];
   const singleTaskFiles = childTasks.length === 1
     ? [
-        { label: "Command", path: childTasks[0].commandPath },
-        { label: "Stdout",  path: childTasks[0].stdoutPath },
-        { label: "Stderr",  path: childTasks[0].stderrPath },
-      ].filter((f): f is { label: string; path: string } => !!f.path)
+        { label: "Command", path: childTasks[0].commandPath, content: childTasks[0].commandContent },
+        { label: "Stdout",  path: childTasks[0].stdoutPath,  content: childTasks[0].stdoutContent  },
+        { label: "Stderr",  path: childTasks[0].stderrPath,  content: childTasks[0].stderrContent  },
+      ].filter((f): f is { label: string; path: string; content: string | undefined } => !!f.path)
     : [];
 
   return (
@@ -319,8 +319,8 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary, ro
             <>
               <div style={styles.sectionLabel}>Task files</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, marginBottom: 8 }}>
-                {singleTaskFiles.map(({ label, path }) => (
-                  <button key={label} style={styles.fileBtn} onClick={() => onOpenSummary({ type: "file", label, path })}>
+                {singleTaskFiles.map(({ label, path, content }) => (
+                  <button key={label} style={styles.fileBtn} onClick={() => onOpenSummary({ type: "file", label, path, content })}>
                     {label}
                   </button>
                 ))}
@@ -368,12 +368,12 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary, ro
               <span style={styles.value}>{node.workDir}</span>
             </div>
           )}
-          {fileButtons.map(({ label, path }) => (
+          {fileButtons.map(({ label, path, content }) => (
             <div key={label} style={styles.row}>
               <span style={styles.key}>{label}</span>
               <button
                 style={styles.fileBtn}
-                onClick={() => onOpenSummary?.({ type: "file", label, path })}
+                onClick={() => onOpenSummary?.({ type: "file", label, path, content })}
               >
                 View
               </button>
