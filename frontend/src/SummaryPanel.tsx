@@ -1,15 +1,49 @@
 import { useState, useEffect } from "react";
 import { WorkflowNode, WorkflowRun, SummaryPane } from "./types";
 
-const API = "http://localhost:8000";
+const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
-const NEXT_CHECKS = [
-  "Review .command.err for error output",
-  "Review .command.sh to verify the executed command",
-  "Confirm input files exist and are readable",
-  "Confirm the container or tool is available on this system",
-  "Check memory/CPU limits if the error is resource-related",
-];
+type FailureExplanation = {
+  summary: string;
+  likelyCauseHeadline: string;
+  likelyCauseDetail: string;
+  whatToCheck: string[];
+  evidenceLabels: string[];
+};
+
+function getFailureExplanation(node: WorkflowNode): FailureExplanation {
+  if (node.commandPath === "__demo__" && node.processName === "GATK_HAPLOTYPECALLER") {
+    return {
+      summary: "GATK_HAPLOTYPECALLER failed (exit code 1)",
+      likelyCauseHeadline: "Missing reference dictionary (.dict file)",
+      likelyCauseDetail:
+        "GATK requires both a .fai index and a .dict file alongside the reference FASTA — /ref/hg38.fa.dict was not found.",
+      whatToCheck: [
+        "Run: gatk CreateSequenceDictionary -R /ref/hg38.fa",
+        "Confirm /ref/hg38.fa.fai is present (samtools faidx /ref/hg38.fa)",
+        "Verify the reference path is correct and mounted inside the container",
+      ],
+      evidenceLabels: ["Stderr", "Command"],
+    };
+  }
+
+  return {
+    summary:
+      node.exitCode !== undefined && node.exitCode !== null
+        ? `Process exited with status ${node.exitCode}.`
+        : "Process failed.",
+    likelyCauseHeadline: "Unknown",
+    likelyCauseDetail: "Inspect the error output and command for details.",
+    whatToCheck: [
+      "Review .command.err for error messages",
+      "Review .command.sh to verify the executed command",
+      "Confirm input files exist and are readable",
+      "Confirm the tool or container image is available",
+      "Check memory/CPU limits if this looks resource-related",
+    ],
+    evidenceLabels: [],
+  };
+}
 
 const STATUS_COLOUR: Record<string, string> = {
   COMPLETED: "#22c55e", FAILED: "#ef4444", CACHED: "#3b82f6",
@@ -35,7 +69,8 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
   const [closeHover, setCloseHover]   = useState(false);
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
 
-  const filePath = pane.type === "file" ? pane.path : null;
+  const filePath    = pane.type === "file" ? pane.path    : null;
+  const fileInline  = pane.type === "file" ? pane.content : null;
 
   useEffect(() => {
     setFileContent(null);
@@ -43,6 +78,11 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
     setWordWrap(false);
     setCopied(false);
     if (!filePath) return;
+    if (fileInline) {
+      setFileContent(fileInline);
+      return;
+    }
+    if (filePath === "__demo__") return;
     setFileLoading(true);
     fetch(`${API}/api/file?path=${encodeURIComponent(filePath)}`)
       .then(async (r) => {
@@ -55,7 +95,7 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
       .then(setFileContent)
       .catch((e) => setFileError(String(e)))
       .finally(() => setFileLoading(false));
-  }, [filePath]);
+  }, [filePath, fileInline]);
 
   async function copyToClipboard() {
     if (!fileContent) return;
@@ -134,14 +174,62 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
             {row("Command",   node.commandPath)}
             {row("Stderr",    node.stderrPath)}
           </div>
-          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1, color: "#475569", textTransform: "uppercase", marginBottom: 8 }}>
-            Next checks
-          </div>
-          <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
-            {NEXT_CHECKS.map((c) => (
-              <li key={c} style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.5 }}>{c}</li>
-            ))}
-          </ul>
+          {(() => {
+            // For process-aggregate nodes, resolve the failed child task so
+            // getFailureExplanation can match demo content fields (commandPath etc.)
+            const taskNode: WorkflowNode = (() => {
+              if (node.childNodeIds && run?.nodes) {
+                const failed = node.childNodeIds
+                  .map((id) => run!.nodes.find((n) => n.id === id))
+                  .find((n): n is WorkflowNode => !!n && n.status === "FAILED");
+                if (failed) return failed;
+              }
+              return node;
+            })();
+            const expl = getFailureExplanation(taskNode);
+            const sectionLabel: React.CSSProperties = { fontSize: 10, fontWeight: 600, letterSpacing: 1, color: "#475569", textTransform: "uppercase", marginBottom: 6, marginTop: 14 };
+            const evidenceArtefacts = [
+              { label: "Command", path: taskNode.commandPath, content: taskNode.commandContent },
+              { label: "Stdout",  path: taskNode.stdoutPath,  content: taskNode.stdoutContent  },
+              { label: "Stderr",  path: taskNode.stderrPath,  content: taskNode.stderrContent  },
+            ].filter((a): a is { label: string; path: string; content: string | undefined } =>
+              !!a.path && expl.evidenceLabels.includes(a.label)
+            );
+            return (
+              <>
+                <div style={sectionLabel}>Failure summary</div>
+                <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.5, marginBottom: 2 }}>{expl.summary}</div>
+
+                <div style={sectionLabel}>Likely cause</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>{expl.likelyCauseHeadline}</div>
+                <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.5, marginBottom: 2 }}>{expl.likelyCauseDetail}</div>
+
+                <div style={sectionLabel}>What to check</div>
+                <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 5, marginBottom: 2 }}>
+                  {expl.whatToCheck.map((c) => (
+                    <li key={c} style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.5 }}>{c}</li>
+                  ))}
+                </ul>
+
+                {evidenceArtefacts.length > 0 && (
+                  <>
+                    <div style={sectionLabel}>Evidence</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
+                      {evidenceArtefacts.map(({ label, path, content }) => (
+                        <button
+                          key={label}
+                          style={{ fontSize: 11, padding: "2px 9px", borderRadius: 4, border: "1px solid #3d4468", background: "#2d3148", color: "#94a3b8", cursor: "pointer" }}
+                          onClick={() => onOpenPane?.({ type: "file", label, path, content })}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })()}
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 16, borderTop: "1px solid #2d3148" }}>
             <button
               disabled

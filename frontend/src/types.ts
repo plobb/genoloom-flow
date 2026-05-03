@@ -9,6 +9,9 @@ export type WorkflowNode = {
   commandPath?: string;
   stdoutPath?: string;
   stderrPath?: string;
+  commandContent?: string;
+  stdoutContent?: string;
+  stderrContent?: string;
   exitCode?: number;
   duration?: string;
   cpus?: number;
@@ -71,7 +74,7 @@ export type SummaryPane =
   | { type: "debug-summary"; nodeId: string }
   | { type: "report"; runId: string }
   | { type: "timeline"; runId: string }
-  | { type: "file"; label: string; path: string }
+  | { type: "file"; label: string; path: string; content?: string }
   | { type: "task-list"; processLabel: string; tasks: WorkflowNode[] };
 
 export type WorkflowRun = {

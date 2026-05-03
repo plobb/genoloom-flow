@@ -5,7 +5,8 @@ import SummaryPanel from "./SummaryPanel";
 import { WorkflowGraph, WorkflowNode, WorkflowEdge, WorkflowRun, WorkflowTemplate, RunSummary, RunSource, SummaryPane, Status } from "./types";
 import { getInitialDemoGraph, runDemoSimulation } from "./demoWorkflow";
 
-const API = "http://localhost:8000";
+const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const VIEWER_MODE = import.meta.env.VITE_VIEWER_MODE === "true";
 
 const SEED_TEMPLATES: WorkflowTemplate[] = [
   { id: "rnaseq-demo", name: "RNA-seq demo", source: "local", description: "Demo RNA-seq pipeline with simulated execution" },
@@ -50,11 +51,13 @@ function PulsingBanner({ message }: { message: string }) {
 
 // ── Dropdown helpers ──────────────────────────────────────────────────────────
 
-function DropdownMenu({ label, triggerStyle, open, onToggle, children }: {
+function DropdownMenu({ label, triggerStyle, open, onToggle, disabled, title, children }: {
   label: React.ReactNode;
   triggerStyle?: React.CSSProperties;
   open: boolean;
   onToggle: () => void;
+  disabled?: boolean;
+  title?: string;
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -70,12 +73,13 @@ function DropdownMenu({ label, triggerStyle, open, onToggle, children }: {
   }, [open]);
   const base: React.CSSProperties = {
     padding: "6px 11px", borderRadius: 6, fontSize: 13, fontWeight: 500,
-    cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
+    cursor: disabled ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 5,
     border: "1px solid #3d4468", background: "#2d3148", color: "#e2e8f0",
+    opacity: disabled ? 0.5 : 1,
   };
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button onClick={onToggle} style={{ ...base, ...triggerStyle }}>
+      <button onClick={onToggle} style={{ ...base, ...triggerStyle }} disabled={disabled} title={title}>
         {label}
         <span style={{ fontSize: 8, opacity: 0.55, marginTop: 1 }}>▾</span>
       </button>
@@ -356,7 +360,9 @@ export default function App() {
     try {
       const r = await fetch(`${API}/graph`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      applyGraph(await r.json(), { runId: "sample", name: "Sample run", runSource: "sample" });
+      const g: WorkflowGraph = await r.json();
+      const clean: WorkflowGraph = { ...g, nodes: g.nodes.map((n) => ({ ...n, status: "COMPLETED" as const })) };
+      applyGraph(clean, { runId: "sample", name: "Sample run", runSource: "sample" });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -770,10 +776,10 @@ export default function App() {
           onToggle={() => setOpenMenu((m) => m === "demo" ? null : "demo")}
         >
           <MenuItem onClick={() => { loadSample(); setOpenMenu(null); }} disabled={loading}>
-            Load sample
+            Sample completed run
           </MenuItem>
           <MenuItem onClick={() => { startDemo(); setOpenMenu(null); }} disabled={activeDemoRunning}>
-            {activeDemoRunning ? "Simulating…" : "Run demo workflow"}
+            {activeDemoRunning ? "Simulating…" : "RNA-seq failure demo"}
           </MenuItem>
         </DropdownMenu>
 
@@ -795,9 +801,11 @@ export default function App() {
         {/* ── Run ── */}
         <DropdownMenu
           label="Run"
-          triggerStyle={{ borderColor: "#16a34a", background: "#14532d", color: "#86efac" }}
-          open={openMenu === "run"}
-          onToggle={() => setOpenMenu((m) => m === "run" ? null : "run")}
+          triggerStyle={{ borderColor: VIEWER_MODE ? "#374151" : "#16a34a", background: VIEWER_MODE ? "#1a1f2e" : "#14532d", color: VIEWER_MODE ? "#4b5563" : "#86efac" }}
+          open={!VIEWER_MODE && openMenu === "run"}
+          onToggle={() => { if (!VIEWER_MODE) setOpenMenu((m) => m === "run" ? null : "run"); }}
+          disabled={VIEWER_MODE}
+          title={VIEWER_MODE ? "Runner unavailable in Docker viewer mode" : undefined}
         >
           <MenuItem onClick={() => { launchRun(); setOpenMenu(null); }} disabled={running || loading}>
             {running ? "Running…" : "Run nf-core/demo"}
@@ -816,21 +824,30 @@ export default function App() {
         <div style={{ flex: 1, overflowY: "auto", background: "#0f1117", padding: "32px 40px" }}>
           <div style={{ maxWidth: 680, margin: "0 auto" }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>nf-core Workbench</div>
-            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 24 }}>Configure and launch approved nf-core workflows locally</div>
+            <div style={{ fontSize: 13, color: "#64748b", marginBottom: VIEWER_MODE ? 12 : 24 }}>Configure and launch approved nf-core workflows locally</div>
+            {VIEWER_MODE && (
+              <div style={{ background: "#1a1f0a", border: "1px solid #3d4a1a", borderRadius: 6, padding: "8px 14px", marginBottom: 20, fontSize: 12, color: "#a3b86c" }}>
+                Running pipelines is not available in Docker viewer mode. To launch workflows, run the app natively — see the README for setup instructions.
+              </div>
+            )}
 
             {/* nf-core/demo — runnable */}
             <div style={{ background: "#131620", border: "1px solid #2d3148", borderRadius: 8, padding: "18px 20px", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>nf-core/demo</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: "2px 6px", borderRadius: 3, background: "#14532d", color: "#86efac", border: "1px solid #16a34a" }}>Runnable</span>
+                  {VIEWER_MODE
+                    ? <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: "2px 6px", borderRadius: 3, background: "#1e2130", color: "#64748b", border: "1px solid #2d3148" }}>View only</span>
+                    : <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: "2px 6px", borderRadius: 3, background: "#14532d", color: "#86efac", border: "1px solid #16a34a" }}>Runnable</span>
+                  }
                 </div>
                 <div style={{ fontSize: 12, color: "#64748b" }}>Small nf-core demo pipeline for local testing</div>
               </div>
               <button
                 onClick={() => launchRun()}
-                disabled={running || loading}
-                style={{ padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: running || loading ? "not-allowed" : "pointer", border: "1px solid #16a34a", background: "#14532d", color: "#86efac", opacity: running || loading ? 0.6 : 1, flexShrink: 0 }}
+                disabled={VIEWER_MODE || running || loading}
+                title={VIEWER_MODE ? "Runner unavailable in Docker viewer mode" : undefined}
+                style={{ padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: VIEWER_MODE || running || loading ? "not-allowed" : "pointer", border: "1px solid #16a34a", background: "#14532d", color: "#86efac", opacity: VIEWER_MODE || running || loading ? 0.4 : 1, flexShrink: 0 }}
               >
                 {running ? "Running…" : "Run"}
               </button>
@@ -841,14 +858,18 @@ export default function App() {
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>nf-core/rnaseq</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: "2px 6px", borderRadius: 3, background: "#14532d", color: "#86efac", border: "1px solid #16a34a" }}>Runnable</span>
+                  {VIEWER_MODE
+                    ? <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: "2px 6px", borderRadius: 3, background: "#1e2130", color: "#64748b", border: "1px solid #2d3148" }}>View only</span>
+                    : <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: "2px 6px", borderRadius: 3, background: "#14532d", color: "#86efac", border: "1px solid #16a34a" }}>Runnable</span>
+                  }
                 </div>
                 <div style={{ fontSize: 12, color: "#64748b" }}>RNA-seq analysis workflow from nf-core</div>
               </div>
               <button
                 onClick={() => launchRun({ endpoint: "/api/runs/nf-core-rnaseq-test", templateId: "nf-core-rnaseq", displayName: "nf-core/rnaseq" })}
-                disabled={running || loading}
-                style={{ padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: running || loading ? "not-allowed" : "pointer", border: "1px solid #16a34a", background: "#14532d", color: "#86efac", opacity: running || loading ? 0.6 : 1, flexShrink: 0 }}
+                disabled={VIEWER_MODE || running || loading}
+                title={VIEWER_MODE ? "Runner unavailable in Docker viewer mode" : undefined}
+                style={{ padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: VIEWER_MODE || running || loading ? "not-allowed" : "pointer", border: "1px solid #16a34a", background: "#14532d", color: "#86efac", opacity: VIEWER_MODE || running || loading ? 0.4 : 1, flexShrink: 0 }}
               >
                 {running ? "Running…" : "Run test profile"}
               </button>
@@ -880,7 +901,7 @@ export default function App() {
         <div style={s.sidebar}>
           <div style={s.sidebarTitle}>Runs</div>
           {workflowRuns.length === 0 ? (
-            <div style={s.sidebarEmpty}>No runs yet</div>
+            <div style={s.sidebarEmpty}>{VIEWER_MODE ? "Use Demo or Upload to load a run." : "No runs yet"}</div>
           ) : (
             [...workflowRuns].reverse().map((run) => (
               <div
@@ -960,7 +981,7 @@ export default function App() {
             />
           </>
         ) : (
-          <div style={s.message}>No graph loaded.</div>
+          <div style={s.message}>{VIEWER_MODE ? "Docker viewer mode — use Demo or Upload to load a run." : "No graph loaded."}</div>
         )}
 
         {/* Jump-to-failure overlay */}
@@ -1005,7 +1026,7 @@ export default function App() {
           </div>
         )}
 
-        {error && <div style={s.errorBanner}>{error}</div>}
+        {error && !(VIEWER_MODE && workflowRuns.length === 0) && <div style={s.errorBanner}>{error}</div>}
       </div>
       </>}
 
