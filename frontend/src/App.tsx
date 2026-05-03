@@ -711,24 +711,30 @@ export default function App() {
       {/* ── Header ── */}
       <div style={s.header}>
         <span style={s.appName}>GENOLOOM</span>
-        {backendRuns.length > 0 && (
-          <>
-            <div style={s.divider} />
-            <select
-              style={s.runSelect}
-              value={activeBackendRunId}
-              disabled={loading}
-              onChange={(e) => { if (e.target.value) loadRun(e.target.value); }}
-            >
-              <option value="">Past runs…</option>
-              {backendRuns.map((r) => {
-                const label = r.display_name ?? r.name ?? r.run_id.slice(0, 8);
-                const status = r.status ? ` · ${r.status.toLowerCase()}` : "";
-                return <option key={r.run_id} value={r.run_id}>{label}{status}</option>;
-              })}
-            </select>
-          </>
-        )}
+        {(() => {
+          const visibleRuns = VIEWER_MODE
+            ? backendRuns.filter((r) => r.display_name ?? r.name)
+            : backendRuns;
+          if (visibleRuns.length === 0) return null;
+          return (
+            <>
+              <div style={s.divider} />
+              <select
+                style={s.runSelect}
+                value={activeBackendRunId}
+                disabled={loading}
+                onChange={(e) => { if (e.target.value) loadRun(e.target.value); }}
+              >
+                <option value="">Past runs…</option>
+                {visibleRuns.map((r) => {
+                  const label = r.display_name ?? r.name ?? r.run_id.slice(0, 8);
+                  const status = r.status ? ` · ${r.status.toLowerCase()}` : "";
+                  return <option key={r.run_id} value={r.run_id}>{label}{status}</option>;
+                })}
+              </select>
+            </>
+          );
+        })()}
         {/* ── Mode switch ── */}
         <div style={{ display: "flex", background: "#131620", border: "1px solid #2d3148", borderRadius: 6, overflow: "hidden" }}>
           {(["debugger", "workbench"] as const).map((m) => (
