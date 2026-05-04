@@ -11,6 +11,93 @@ type FailureExplanation = {
   evidenceLabels: string[];
 };
 
+function detectErrorPattern(stderr: string | undefined) {
+  if (!stderr) return null;
+
+  const lower = stderr.toLowerCase();
+
+  if (lower.includes("no such file") || lower.includes("file not found")) {
+    return {
+      headline: "Missing input file",
+      explanation: "The process failed because an expected input file could not be found.",
+      checks: [
+        "Check that input file paths are correct",
+        "Verify upstream process outputs",
+        "Ensure files are not being cleaned or moved prematurely",
+      ],
+      evidence: ["'No such file' found in stderr"],
+    };
+  }
+
+  if (lower.includes("permission denied")) {
+    return {
+      headline: "Permission error",
+      explanation: "The process does not have permission to access a required file or directory.",
+      checks: [
+        "Check file permissions",
+        "Verify container/user execution context",
+        "Ensure working directory is writable",
+      ],
+      evidence: ["'Permission denied' found in stderr"],
+    };
+  }
+
+  if (
+    lower.includes("java.lang.outofmemoryerror") ||
+    lower.includes("gc overhead limit exceeded") ||
+    lower.includes("unable to allocate")
+  ) {
+    return {
+      headline: "Java memory error",
+      explanation: "The process appears to have run out of Java heap or available memory.",
+      checks: [
+        "Increase the process memory setting",
+        "Check Java heap options such as -Xmx",
+        "Review whether the input size is larger than expected",
+      ],
+      evidence: ["Memory error found in stderr"],
+    };
+  }
+
+  if (
+    lower.includes("command not found") ||
+    lower.includes("not found") ||
+    lower.includes("exit status 127")
+  ) {
+    return {
+      headline: "Command not found",
+      explanation: "The process tried to run a command that was not available in the execution environment.",
+      checks: [
+        "Check the process container image",
+        "Confirm the tool is installed and on PATH",
+        "Verify the command name and spelling",
+      ],
+      evidence: ["Command lookup failure found in stderr"],
+    };
+  }
+
+  if (
+    lower.includes("failed to pull image") ||
+    lower.includes("manifest unknown") ||
+    lower.includes("singularity") ||
+    lower.includes("apptainer") ||
+    lower.includes("docker: error response from daemon")
+  ) {
+    return {
+      headline: "Container image problem",
+      explanation: "The process appears to have failed while preparing or using its container image.",
+      checks: [
+        "Check the container image name and tag",
+        "Verify registry access from the execution environment",
+        "Confirm Docker, Singularity, or Apptainer is configured correctly",
+      ],
+      evidence: ["Container-related error found in stderr"],
+    };
+  }
+
+  return null;
+}
+
 function getFailureExplanation(node: WorkflowNode): FailureExplanation {
   if (node.commandPath === "__demo__" && node.processName === "GATK_HAPLOTYPECALLER") {
     return {
@@ -24,6 +111,20 @@ function getFailureExplanation(node: WorkflowNode): FailureExplanation {
         "Verify the reference path is correct and mounted inside the container",
       ],
       evidenceLabels: ["Stderr", "Command"],
+    };
+  }
+
+  const pattern = detectErrorPattern(node.stderrContent);
+  if (pattern) {
+    return {
+      summary:
+        node.exitCode !== undefined && node.exitCode !== null
+          ? `Process exited with status ${node.exitCode}.`
+          : "Process failed.",
+      likelyCauseHeadline: pattern.headline,
+      likelyCauseDetail: pattern.explanation,
+      whatToCheck: pattern.checks,
+      evidenceLabels: ["Stderr"],
     };
   }
 
