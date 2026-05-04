@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from models import WorkflowGraph, WorkflowNode, WorkflowEdge
 from parsers.dag_parser import parse_dag, parse_dag_content
@@ -287,3 +288,8 @@ async def graph_upload(
         status_map = parse_trace_content(trace_text)
 
     return _build_graph(parsed, status_map)
+
+
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="static")
