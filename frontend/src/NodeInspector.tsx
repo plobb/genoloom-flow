@@ -275,6 +275,15 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary, ro
         <span style={{ ...styles.badge, background: colour }}>{node.status}</span>
       )}
 
+      {onOpenSummary && node.status && (
+        <button
+          style={styles.summaryBtn}
+          onClick={() => onOpenSummary({ type: "debug-summary", nodeId: node.id })}
+        >
+          Summary
+        </button>
+      )}
+
       {node.status === "FAILED" && rootCause !== undefined && (
         <>
           <div style={styles.sectionLabel}>Root cause</div>
@@ -339,15 +348,6 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary, ro
             </>
           )}
         </>
-      )}
-
-      {onOpenSummary && node.status && node.taskCount === undefined && (
-        <button
-          style={styles.summaryBtn}
-          onClick={() => onOpenSummary({ type: "debug-summary", nodeId: node.id })}
-        >
-          Summary
-        </button>
       )}
 
       {basicRows.filter(([, v]) => v !== undefined && v !== null).map(renderRow)}

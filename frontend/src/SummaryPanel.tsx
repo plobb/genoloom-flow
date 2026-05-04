@@ -174,7 +174,7 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
             {row("Command",   node.commandPath)}
             {row("Stderr",    node.stderrPath)}
           </div>
-          {(() => {
+          {node.status === "FAILED" ? (() => {
             // For process-aggregate nodes, resolve the failed child task so
             // getFailureExplanation can match demo content fields (commandPath etc.)
             const taskNode: WorkflowNode = (() => {
@@ -216,6 +216,45 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
                     <div style={sectionLabel}>Evidence</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
                       {evidenceArtefacts.map(({ label, path, content }) => (
+                        <button
+                          key={label}
+                          style={{ fontSize: 11, padding: "2px 9px", borderRadius: 4, border: "1px solid #3d4468", background: "#2d3148", color: "#94a3b8", cursor: "pointer" }}
+                          onClick={() => onOpenPane?.({ type: "file", label, path, content })}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })() : (() => {
+            const sectionLabel: React.CSSProperties = { fontSize: 10, fontWeight: 600, letterSpacing: 1, color: "#475569", textTransform: "uppercase", marginBottom: 6, marginTop: 14 };
+            const allArtefacts = [
+              { label: "Command", path: node.commandPath, content: node.commandContent },
+              { label: "Stdout",  path: node.stdoutPath,  content: node.stdoutContent  },
+              { label: "Stderr",  path: node.stderrPath,  content: node.stderrContent  },
+            ].filter((a): a is { label: string; path: string; content: string | undefined } => !!a.path);
+            const taskCountParts: string[] = [];
+            if (node.completedCount) taskCountParts.push(`${node.completedCount} completed`);
+            if (node.failedCount)    taskCountParts.push(`${node.failedCount} failed`);
+            if (node.runningCount)   taskCountParts.push(`${node.runningCount} running`);
+            if (node.unknownCount)   taskCountParts.push(`${node.unknownCount} unknown`);
+            return (
+              <>
+                <div style={sectionLabel}>Process summary</div>
+                <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.5, marginBottom: 2 }}>No failure was detected for this process.</div>
+                {node.taskCount !== undefined && taskCountParts.length > 0 && (
+                  <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.5, marginBottom: 2 }}>
+                    Tasks: {taskCountParts.join(", ")}
+                  </div>
+                )}
+                {allArtefacts.length > 0 && (
+                  <>
+                    <div style={sectionLabel}>Artefacts</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
+                      {allArtefacts.map(({ label, path, content }) => (
                         <button
                           key={label}
                           style={{ fontSize: 11, padding: "2px 9px", borderRadius: 4, border: "1px solid #3d4468", background: "#2d3148", color: "#94a3b8", cursor: "pointer" }}
