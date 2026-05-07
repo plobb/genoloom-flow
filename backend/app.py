@@ -24,7 +24,7 @@ _cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -108,6 +108,24 @@ def _read_meta(run_dir: Path) -> dict:
         except Exception:
             pass
     return {}
+
+
+def _unique_display_name(base: str) -> str:
+    """Return base if no existing run uses it, else append (2), (3)… until unique."""
+    if not _RUNS_DIR.is_dir():
+        return base
+    existing: set[str] = set()
+    for d in _RUNS_DIR.iterdir():
+        if d.is_dir():
+            dn = _read_meta(d).get("display_name", "")
+            if dn:
+                existing.add(dn)
+    if base not in existing:
+        return base
+    n = 2
+    while f"{base} ({n})" in existing:
+        n += 1
+    return f"{base} ({n})"
 
 
 def _normalise(name: str) -> str:
@@ -435,6 +453,24 @@ def archive_run(run_id: str, payload: _ArchivePayload):
     return {"run_id": run_id, "archived": payload.archived}
 
 
+@app.delete("/api/runs/{run_id}")
+def delete_run(run_id: str):
+    """Permanently delete a run directory. Only allowed when the run is archived."""
+    run_dir = (_RUNS_DIR / run_id).resolve()
+    if not str(run_dir).startswith(str(_RUNS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    if not run_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Run not found")
+    meta = _read_meta(run_dir)
+    if not meta.get("archived", False):
+        raise HTTPException(
+            status_code=409,
+            detail="Run must be archived before it can be deleted. Archive it first.",
+        )
+    shutil.rmtree(run_dir)
+    return {"run_id": run_id, "deleted": True}
+
+
 @app.post("/api/runs/nf-core-demo-test")
 def trigger_nf_core_demo():
     """Run nf-core/demo with the test profile and return run artefact paths."""
@@ -497,12 +533,13 @@ async def import_bundle(file: UploadFile = File(...)):
         except Exception:
             pass
 
-    # Derive a human-readable name from the uploaded filename.
+    # Derive a human-readable name from the uploaded filename, deduplicated.
     display_name = filename
     for suffix in (".tar.gz", ".tgz"):
         if display_name.endswith(suffix):
             display_name = display_name[: -len(suffix)]
             break
+    display_name = _unique_display_name(display_name)
 
     meta = {
         "display_name": display_name,

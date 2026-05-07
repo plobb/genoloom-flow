@@ -741,6 +741,27 @@ export default function App() {
     } catch { /* best-effort */ }
   }
 
+  async function deleteRun(run_id: string, displayName: string) {
+    if (!window.confirm(`Delete "${displayName}" permanently?\n\nThis cannot be undone.`)) return;
+    try {
+      const r = await fetch(`${API}/api/runs/${run_id}`, { method: "DELETE" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        setError(body.detail ?? `HTTP ${r.status}`);
+        return;
+      }
+      setWorkflowRuns((prev) => prev.filter((wr) => wr.id !== run_id));
+      if (activeRunId === run_id) {
+        setActiveRunId(null);
+        setSelected(null);
+        setSummaryPane(null);
+      }
+      fetchBackendRuns();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   // Auto-load on first render. In viewer/public mode start the demo directly.
   useEffect(() => {
     fetch(`${API}/api/bundle/status`)
@@ -1075,23 +1096,45 @@ export default function App() {
                         {run.display_name ?? run.name ?? run.run_id.slice(0, 8)}
                       </div>
                       {isHovered && (
-                        <button
-                          style={{
-                            flexShrink: 0,
-                            padding: "1px 4px",
-                            fontSize: 9,
-                            lineHeight: 1.4,
-                            background: "transparent",
-                            border: "1px solid #3d4468",
-                            borderRadius: 3,
-                            color: "#475569",
-                            cursor: "pointer",
-                          }}
-                          onClick={(e) => { e.stopPropagation(); archiveRun(run.run_id, !run.archived); }}
-                          title={run.archived ? "Unarchive this run" : "Archive this run"}
-                        >
-                          {run.archived ? "↩" : "⊟"}
-                        </button>
+                        <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                          <button
+                            style={{
+                              padding: "1px 4px",
+                              fontSize: 9,
+                              lineHeight: 1.4,
+                              background: "transparent",
+                              border: "1px solid #3d4468",
+                              borderRadius: 3,
+                              color: "#475569",
+                              cursor: "pointer",
+                            }}
+                            onClick={(e) => { e.stopPropagation(); archiveRun(run.run_id, !run.archived); }}
+                            title={run.archived ? "Unarchive this run" : "Archive this run"}
+                          >
+                            {run.archived ? "↩" : "⊟"}
+                          </button>
+                          {run.archived && (
+                            <button
+                              style={{
+                                padding: "1px 4px",
+                                fontSize: 9,
+                                lineHeight: 1.4,
+                                background: "transparent",
+                                border: "1px solid #7f1d1d",
+                                borderRadius: 3,
+                                color: "#ef4444",
+                                cursor: "pointer",
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteRun(run.run_id, run.display_name ?? run.name ?? run.run_id.slice(0, 8));
+                              }}
+                              title="Delete this run permanently"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                     <div style={s.runMeta}>
