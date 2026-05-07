@@ -197,6 +197,7 @@ function deriveProcessGraph(
       runningCount: running,
       unknownCount: unknown,
       childNodeIds: children.map((c) => c.id),
+      tasks: backendNode?.tasks,
     });
   }
 
@@ -606,6 +607,7 @@ export default function App() {
     });
 
     simCleanups.current.set(runId, cleanup);
+    return runId;
   }
 
   // --- summary pane -----------------------------------------------------------
@@ -669,7 +671,16 @@ export default function App() {
 
   // Auto-load on first render. In viewer/public mode start the demo directly.
   useEffect(() => {
-    if (VIEWER_MODE) { startDemo(); } else { loadSample(); }
+    if (VIEWER_MODE) {
+      const runId = startDemo();
+      fetchBackendRuns();
+      return () => {
+        simCleanups.current.get(runId)?.();
+        simCleanups.current.delete(runId);
+        setWorkflowRuns((prev) => prev.filter((r) => r.id !== runId));
+      };
+    }
+    loadSample();
     fetchBackendRuns();
   }, []);
 
