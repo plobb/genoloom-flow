@@ -312,6 +312,77 @@ def _build_graph(
     return WorkflowGraph(nodes=nodes, edges=edges)
 
 
+def _compute_run_summary(run_dir: Path) -> dict:
+    """Parse dag.dot+trace.txt and return summary metadata suitable for meta.json.
+
+    Returns an empty dict on any error so callers are never blocked.
+    Only includes keys whose values are actually known — callers should merge
+    with update() so existing meta keys are not inadvertently cleared.
+    """
+    try:
+        dag_path = run_dir / "dag.dot"
+        if not dag_path.exists():
+            return {}
+
+        status_map = None
+        trace_path = run_dir / "trace.txt"
+        if trace_path.exists():
+            status_map = parse_trace_content(trace_path.read_text())
+
+        graph = _build_graph(
+            parse_dag(str(dag_path)),
+            status_map,
+            work_base=_run_work_base(run_dir),
+        )
+
+        nodes = graph.nodes
+        has_trace = any(n.taskCount is not None for n in nodes)
+
+        result: dict = {}
+
+        if has_trace:
+            task_count      = sum(n.taskCount or 0 for n in nodes)
+            completed_count = sum(n.completedCount or 0 for n in nodes)
+            failed_count    = sum(n.failedCount or 0 for n in nodes)
+            running_count   = sum(n.runningCount or 0 for n in nodes)
+            unknown_count   = sum(n.unknownCount or 0 for n in nodes)
+
+            result["task_count"]           = task_count
+            result["completed_task_count"] = completed_count
+            result["failed_task_count"]    = failed_count
+            if running_count:
+                result["running_task_count"] = running_count
+            if unknown_count:
+                result["unknown_task_count"] = unknown_count
+
+            failed_process_count = sum(1 for n in nodes if n.status == "FAILED")
+            if failed_process_count:
+                result["failed_process_count"] = failed_process_count
+
+            if failed_count:
+                result["status"] = "FAILED"
+            elif running_count:
+                result["status"] = "RUNNING"
+            elif completed_count:
+                result["status"] = "COMPLETED"
+            else:
+                result["status"] = "UNKNOWN"
+
+        # Top error group — only available when work_base resolved (imported bundles with work_dir/)
+        top_eg = None
+        for node in nodes:
+            for eg in (node.errorGroups or []):
+                if top_eg is None or eg.count > top_eg.count:
+                    top_eg = eg
+        if top_eg is not None:
+            result["top_error_title"] = top_eg.title
+            result["top_error_count"] = top_eg.count
+
+        return result
+    except Exception:
+        return {}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -373,16 +444,22 @@ def list_runs():
             except Exception:
                 status = "unknown"
         result.append({
-            "run_id":       d.name,
-            "run_dir":      str(d),
-            "display_name": meta.get("display_name"),
-            "workflow":     meta.get("workflow"),
-            "status":       status,
-            "source":       meta.get("source"),
-            "archived":     meta.get("archived", False),
-            "started":      meta.get("started"),
-            "completed":    meta.get("completed"),
-            "artefacts":    {key: (d / fname).exists() for key, fname in _ARTEFACTS.items()},
+            "run_id":               d.name,
+            "run_dir":              str(d),
+            "display_name":         meta.get("display_name"),
+            "workflow":             meta.get("workflow"),
+            "status":               status,
+            "source":               meta.get("source"),
+            "archived":             meta.get("archived", False),
+            "started":              meta.get("started"),
+            "completed":            meta.get("completed"),
+            "task_count":           meta.get("task_count"),
+            "failed_task_count":    meta.get("failed_task_count"),
+            "completed_task_count": meta.get("completed_task_count"),
+            "failed_process_count": meta.get("failed_process_count"),
+            "top_error_title":      meta.get("top_error_title"),
+            "top_error_count":      meta.get("top_error_count"),
+            "artefacts":            {key: (d / fname).exists() for key, fname in _ARTEFACTS.items()},
         })
     return result
 
@@ -544,9 +621,10 @@ async def import_bundle(file: UploadFile = File(...)):
     meta = {
         "display_name": display_name,
         "source":       "imported",
-        "status":       "completed",
+        "status":       "completed",  # overridden below if trace data is available
         "created_at":   datetime.now(timezone.utc).isoformat(),
     }
+    meta.update(_compute_run_summary(run_dir))
     (run_dir / "meta.json").write_text(json.dumps(meta, indent=2))
 
     return {

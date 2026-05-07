@@ -82,6 +82,13 @@ export type RunSummary = {
   status?: string;
   source?: string;
   archived?: boolean;
+  // Derived summary metadata (absent for older runs or dag-only imports)
+  task_count?: number;
+  failed_task_count?: number;
+  completed_task_count?: number;
+  failed_process_count?: number;
+  top_error_title?: string;
+  top_error_count?: number;
   artefacts: {
     dag: boolean;
     trace: boolean;

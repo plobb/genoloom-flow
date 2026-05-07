@@ -1150,6 +1150,16 @@ export default function App() {
                         {displayStatus}
                       </span>
                     </div>
+                    {run.task_count != null && (
+                      <div style={{ fontSize: 10, color: "#64748b", marginTop: 2, lineHeight: 1.3 }}>
+                        {run.task_count} tasks{(run.failed_task_count ?? 0) > 0 ? ` · ${run.failed_task_count} failed` : ""}
+                      </div>
+                    )}
+                    {run.top_error_title != null && (
+                      <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }} title={run.top_error_title}>
+                        {run.top_error_title}{run.top_error_count != null ? ` ×${run.top_error_count}` : ""}
+                      </div>
+                    )}
                   </div>
                 );
               })}
