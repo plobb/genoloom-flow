@@ -1,11 +1,17 @@
+import io
 import json
 import os
+import shutil
+import tarfile
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel as _PydanticBase
 
 from models import WorkflowGraph, WorkflowNode, WorkflowEdge, TaskRecord, ErrorGroup
 from parsers.dag_parser import parse_dag, parse_dag_content
@@ -41,6 +47,19 @@ def _bundle_work_base() -> Path | None:
             return candidate
     return None
 
+
+def _run_work_base(run_dir: Path) -> Path | None:
+    """Return the task work directory for a stored run.
+
+    Checks inside run_dir first (imported bundles store work_dir/ there),
+    then falls back to the project-level work/ directory (nf-core launched runs).
+    """
+    for sub in ("work_dir", "work"):
+        candidate = run_dir / sub
+        if candidate.is_dir():
+            return candidate
+    return _WORK_DIR if _WORK_DIR.is_dir() else None
+
 _STDERR_PEEK = 4096  # bytes read from stderr for signature extraction
 
 _ERROR_PATTERNS: list[tuple[str, str, list[str]]] = [
@@ -64,6 +83,10 @@ def _classify_stderr(content: str, exit_code: int | None) -> tuple[str, str, str
                 return sig, title, title
     code = str(exit_code) if exit_code is not None else "unknown"
     return f"exit-{code}", f"Unexpected exit ({code})", f"Process exited with status {code}"
+
+
+class _ArchivePayload(_PydanticBase):
+    archived: bool = True
 
 
 _ARTEFACTS = {
@@ -296,7 +319,7 @@ def read_task_file(path: str = Query(...)) -> PlainTextResponse:
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid path")
 
-    allowed = [str(_WORK_DIR.resolve())]
+    allowed = [str(_WORK_DIR.resolve()), str(_RUNS_DIR.resolve())]
     wb = _bundle_work_base()
     if wb is not None:
         allowed.append(str(wb.resolve()))
@@ -323,14 +346,22 @@ def list_runs():
         if not d.is_dir():
             continue
         meta = _read_meta(d)
-        run_stat = get_run_status(d.name, d)
+        # Imported bundles are static; skip the live-runner status check for them.
+        if meta.get("source") == "imported":
+            status = meta.get("status", "completed")
+        else:
+            try:
+                status = get_run_status(d.name, d)["status"]
+            except Exception:
+                status = "unknown"
         result.append({
             "run_id":       d.name,
             "run_dir":      str(d),
             "display_name": meta.get("display_name"),
             "workflow":     meta.get("workflow"),
-            "status":       run_stat["status"],
+            "status":       status,
             "source":       meta.get("source"),
+            "archived":     meta.get("archived", False),
             "started":      meta.get("started"),
             "completed":    meta.get("completed"),
             "artefacts":    {key: (d / fname).exists() for key, fname in _ARTEFACTS.items()},
@@ -387,7 +418,21 @@ def get_run_graph(run_id: str):
     if trace_path.exists():
         status_map = parse_trace_content(trace_path.read_text())
 
-    return _build_graph(parse_dag(str(dag_path)), status_map, work_base=_PROJECT_ROOT / "work")
+    return _build_graph(parse_dag(str(dag_path)), status_map, work_base=_run_work_base(run_dir))
+
+
+@app.post("/api/runs/{run_id}/archive")
+def archive_run(run_id: str, payload: _ArchivePayload):
+    """Persist the archived flag for a run by updating its meta.json."""
+    run_dir = (_RUNS_DIR / run_id).resolve()
+    if not str(run_dir).startswith(str(_RUNS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    if not run_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Run not found")
+    meta = _read_meta(run_dir)
+    meta["archived"] = payload.archived
+    (run_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    return {"run_id": run_id, "archived": payload.archived}
 
 
 @app.post("/api/runs/nf-core-demo-test")
@@ -400,6 +445,82 @@ def trigger_nf_core_demo():
 def trigger_nf_core_rnaseq():
     """Run nf-core/rnaseq with the test profile and return run artefact paths."""
     return run_nf_core_rnaseq()
+
+
+@app.post("/api/runs/import")
+async def import_bundle(file: UploadFile = File(...)):
+    """Accept a .tar.gz Nextflow bundle, extract it safely, and return run metadata."""
+    filename = file.filename or "bundle.tar.gz"
+    if not filename.endswith(".tar.gz"):
+        raise HTTPException(status_code=400, detail="Only .tar.gz archives are supported")
+
+    run_id  = str(uuid.uuid4())
+    run_dir = _RUNS_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    raw = await file.read()
+    try:
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
+            run_dir_str = str(run_dir.resolve())
+            for member in tf.getmembers():
+                # Reject symlinks entirely — they can escape the target directory.
+                if member.issym() or member.islnk():
+                    raise HTTPException(status_code=400, detail=f"Archive contains symlinks: {member.name!r}")
+                # Reject absolute paths and path-traversal components.
+                m_path = Path(member.name)
+                if m_path.is_absolute() or ".." in m_path.parts:
+                    raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member.name!r}")
+                # Confirm the resolved destination stays inside run_dir.
+                target = (run_dir / m_path).resolve()
+                if not str(target).startswith(run_dir_str):
+                    raise HTTPException(status_code=400, detail=f"Path traversal detected: {member.name!r}")
+            tf.extractall(run_dir)
+    except HTTPException:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=f"Failed to extract archive: {exc}") from exc
+
+    # Archives often have a single top-level directory; hoist its contents up.
+    dag_candidates = list(run_dir.rglob("dag.dot"))
+    if not dag_candidates:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail="No dag.dot found in archive — is this a Nextflow run bundle?")
+
+    bundle_root = dag_candidates[0].parent
+    if bundle_root != run_dir:
+        for item in list(bundle_root.iterdir()):
+            item.rename(run_dir / item.name)
+        try:
+            bundle_root.rmdir()
+        except Exception:
+            pass
+
+    # Derive a human-readable name from the uploaded filename.
+    display_name = filename
+    for suffix in (".tar.gz", ".tgz"):
+        if display_name.endswith(suffix):
+            display_name = display_name[: -len(suffix)]
+            break
+
+    meta = {
+        "display_name": display_name,
+        "source":       "imported",
+        "status":       "completed",
+        "created_at":   datetime.now(timezone.utc).isoformat(),
+    }
+    (run_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+
+    return {
+        "run_id":       run_id,
+        "display_name": display_name,
+        "dag":          (run_dir / "dag.dot").exists(),
+        "trace":        (run_dir / "trace.txt").exists(),
+        "report":       (run_dir / "report.html").exists(),
+        "timeline":     (run_dir / "timeline.html").exists(),
+        "work_dir":     any((run_dir / s).is_dir() for s in ("work_dir", "work")),
+    }
 
 
 @app.get("/api/bundle/status")

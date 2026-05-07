@@ -81,6 +81,7 @@ export type RunSummary = {
   name?: string;
   status?: string;
   source?: string;
+  archived?: boolean;
   artefacts: {
     dag: boolean;
     trace: boolean;
@@ -123,6 +124,7 @@ export type WorkflowRun = {
   edges: WorkflowEdge[];
   startedAt: string;
   completedAt?: string;
+  archived?: boolean;
   // Only populated for local-nextflow runs
   dagAvailable?: boolean;
   traceAvailable?: boolean;

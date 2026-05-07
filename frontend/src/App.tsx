@@ -295,6 +295,8 @@ export default function App() {
   const [layout, setLayout]           = useState<"force" | "dag">("dag");
   const [graphView, setGraphView]     = useState<"process" | "full">("process");
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
+  const [showArchived, setShowArchived]         = useState(false);
+  const [hoveredSidebarId, setHoveredSidebarId] = useState<string | null>(null);
   // --- refs ------------------------------------------------------------------
   const fileRef       = useRef<HTMLInputElement>(null);
   const traceRef      = useRef<HTMLInputElement>(null);
@@ -317,10 +319,6 @@ export default function App() {
   const rootCauseNode = selected?.status === "FAILED"
     ? findRootCauseCandidate(selected, displayGraph.nodes, displayGraph.edges)
     : undefined;
-  // Highlight the active entry in the backend-runs dropdown
-  const activeBackendRunId = backendRuns.some((r) => r.run_id === activeRunId)
-    ? (activeRunId ?? "")
-    : "";
   // Show "Simulating…" label only when the currently-displayed run is a live demo
   const activeDemoRunning =
     activeRun?.status === "RUNNING" && activeRun.workflowTemplateId === "rnaseq-demo";
@@ -732,6 +730,17 @@ export default function App() {
     setSummaryPane(null);
   }
 
+  async function archiveRun(run_id: string, archived: boolean) {
+    try {
+      await fetch(`${API}/api/runs/${run_id}/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived }),
+      });
+      fetchBackendRuns();
+    } catch { /* best-effort */ }
+  }
+
   // Auto-load on first render. In viewer/public mode start the demo directly.
   useEffect(() => {
     fetch(`${API}/api/bundle/status`)
@@ -776,6 +785,16 @@ export default function App() {
   void workflowTemplates;
   void selectedWorkflowTemplateId;
 
+  // Sidebar data — persistent runs come from backendRuns; transient (demo/sample/upload)
+  // are in-memory only and excluded from backendRuns.
+  const backendRunIds = new Set(backendRuns.map((r) => r.run_id));
+  const transientRuns = workflowRuns.filter((r) => !backendRunIds.has(r.id));
+  const allPersistent = VIEWER_MODE
+    ? backendRuns.filter((r) => r.display_name ?? r.name)
+    : backendRuns;
+  const visiblePersistent = allPersistent.filter((r) => showArchived || !r.archived);
+  const hasArchivedRuns   = allPersistent.some((r) => r.archived);
+
   // --- styles ----------------------------------------------------------------
   const s: Record<string, React.CSSProperties> = {
     root:    { display: "flex", flexDirection: "column", height: "100vh", fontFamily: "system-ui, sans-serif" },
@@ -817,30 +836,6 @@ export default function App() {
       {/* ── Header ── */}
       <div style={s.header}>
         <span style={s.appName}>GENOLOOM</span>
-        {(() => {
-          const visibleRuns = VIEWER_MODE
-            ? backendRuns.filter((r) => r.display_name ?? r.name)
-            : backendRuns;
-          if (visibleRuns.length === 0) return null;
-          return (
-            <>
-              <div style={s.divider} />
-              <select
-                style={s.runSelect}
-                value={activeBackendRunId}
-                disabled={loading}
-                onChange={(e) => { if (e.target.value) loadRun(e.target.value); }}
-              >
-                <option value="">Saved runs…</option>
-                {visibleRuns.map((r) => {
-                  const label = r.display_name ?? r.name ?? r.run_id.slice(0, 8);
-                  const status = r.status ? ` · ${r.status.toLowerCase()}` : "";
-                  return <option key={r.run_id} value={r.run_id}>{label}{status}</option>;
-                })}
-              </select>
-            </>
-          );
-        })()}
         {/* ── Mode switch ── */}
         <div style={{ display: "flex", background: "#131620", border: "1px solid #2d3148", borderRadius: 6, overflow: "hidden" }}>
           {(["debugger", "workbench"] as const).map((m) => (
@@ -1046,31 +1041,108 @@ export default function App() {
         {/* Runs sidebar */}
         <div style={s.sidebar}>
           <div style={s.sidebarTitle}>Runs</div>
-          {workflowRuns.length === 0 ? (
-            <div style={s.sidebarEmpty}>{VIEWER_MODE ? "Use Demo or Open to load a run." : "Import a run archive to get started."}</div>
+          {visiblePersistent.length === 0 && transientRuns.length === 0 ? (
+            <div style={s.sidebarEmpty}>
+              {VIEWER_MODE ? "Use Demo to load a run." : "No runs yet. Import a run archive to get started."}
+            </div>
           ) : (
-            [...workflowRuns].reverse().map((run) => (
-              <div
-                key={run.id}
-                style={run.id === activeRunId ? { ...s.runItem, ...s.runItemActive } : s.runItem}
-                onClick={() => switchRun(run.id)}
-              >
-                <div style={s.runName} title={run.name}>{run.name}</div>
-                <div style={s.runMeta}>
-                  <span style={{
-                    ...s.runSourceBadge,
-                    color: RUN_SOURCE_CONFIG[run.runSource].color,
-                    borderColor: `${RUN_SOURCE_CONFIG[run.runSource].color}50`,
-                    background: `${RUN_SOURCE_CONFIG[run.runSource].color}18`,
-                  }}>
-                    {RUN_SOURCE_CONFIG[run.runSource].label}
-                  </span>
-                  <span style={{ ...s.runStatusLabel, color: RUN_STATUS_COLOUR[run.status] }}>
-                    {run.status}
-                  </span>
+            <>
+              {[...visiblePersistent].reverse().map((run) => {
+                const isActive  = activeRunId === run.run_id;
+                const isHovered = hoveredSidebarId === run.run_id;
+                const srcKey = (run.source ?? "local-nextflow") as RunSource;
+                const srcCfg = RUN_SOURCE_CONFIG[srcKey] ?? RUN_SOURCE_CONFIG["local-nextflow"];
+                const inMemRun  = workflowRuns.find((r) => r.id === run.run_id);
+                const displayStatus = ((inMemRun?.status ?? run.status ?? "COMPLETED") as string).toUpperCase();
+                const statusColor = RUN_STATUS_COLOUR[displayStatus as WorkflowRun["status"]] ?? "#9ca3af";
+                return (
+                  <div
+                    key={run.run_id}
+                    style={{
+                      ...s.runItem,
+                      ...(isActive ? s.runItemActive : {}),
+                      opacity: run.archived ? 0.45 : 1,
+                    }}
+                    onMouseEnter={() => setHoveredSidebarId(run.run_id)}
+                    onMouseLeave={() => setHoveredSidebarId(null)}
+                    onClick={() => {
+                      if (inMemRun) switchRun(run.run_id);
+                      else loadRun(run.run_id);
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 4 }}>
+                      <div style={{ ...s.runName, flex: 1 }} title={run.display_name ?? run.name ?? run.run_id}>
+                        {run.display_name ?? run.name ?? run.run_id.slice(0, 8)}
+                      </div>
+                      {isHovered && (
+                        <button
+                          style={{
+                            flexShrink: 0,
+                            padding: "1px 4px",
+                            fontSize: 9,
+                            lineHeight: 1.4,
+                            background: "transparent",
+                            border: "1px solid #3d4468",
+                            borderRadius: 3,
+                            color: "#475569",
+                            cursor: "pointer",
+                          }}
+                          onClick={(e) => { e.stopPropagation(); archiveRun(run.run_id, !run.archived); }}
+                          title={run.archived ? "Unarchive this run" : "Archive this run"}
+                        >
+                          {run.archived ? "↩" : "⊟"}
+                        </button>
+                      )}
+                    </div>
+                    <div style={s.runMeta}>
+                      <span style={{
+                        ...s.runSourceBadge,
+                        color: srcCfg.color,
+                        borderColor: `${srcCfg.color}50`,
+                        background: `${srcCfg.color}18`,
+                      }}>
+                        {srcCfg.label}
+                      </span>
+                      <span style={{ ...s.runStatusLabel, color: statusColor }}>
+                        {displayStatus}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              {[...transientRuns].reverse().map((run) => (
+                <div
+                  key={run.id}
+                  style={run.id === activeRunId ? { ...s.runItem, ...s.runItemActive } : s.runItem}
+                  onClick={() => switchRun(run.id)}
+                >
+                  <div style={s.runName} title={run.name}>{run.name}</div>
+                  <div style={s.runMeta}>
+                    <span style={{
+                      ...s.runSourceBadge,
+                      color: RUN_SOURCE_CONFIG[run.runSource].color,
+                      borderColor: `${RUN_SOURCE_CONFIG[run.runSource].color}50`,
+                      background: `${RUN_SOURCE_CONFIG[run.runSource].color}18`,
+                    }}>
+                      {RUN_SOURCE_CONFIG[run.runSource].label}
+                    </span>
+                    <span style={{ ...s.runStatusLabel, color: RUN_STATUS_COLOUR[run.status] }}>
+                      {run.status}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+            </>
+          )}
+          {hasArchivedRuns && (
+            <div style={{ padding: "6px 12px", borderTop: "1px solid #1e2130" }}>
+              <button
+                onClick={() => setShowArchived((v) => !v)}
+                style={{ background: "transparent", border: "none", color: "#475569", fontSize: 11, cursor: "pointer", padding: 0 }}
+              >
+                {showArchived ? "Hide archived" : "Show archived"}
+              </button>
+            </div>
           )}
         </div>
 
