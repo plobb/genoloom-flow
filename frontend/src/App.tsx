@@ -269,6 +269,33 @@ function findRootCauseCandidate(
   return nodeById.get(failedAncestorIds.values().next().value as string)!;
 }
 
+// Return the failed node most worth showing first: highest failedCount wins,
+// with a fallback to the first FAILED node when counts are unavailable.
+function pickWorstFailedNode(nodes: WorkflowNode[]): WorkflowNode | null {
+  const failed = nodes.filter((n) => n.status === "FAILED");
+  if (failed.length === 0) return null;
+  return failed.reduce((best, n) => ((n.failedCount ?? 0) > (best.failedCount ?? 0) ? n : best));
+}
+
+// Convert TaskRecord children into minimal WorkflowNode objects suitable for
+// the task-list summary pane (mirrors the mapping in NodeInspector).
+function taskRecordsToNodes(tasks: NonNullable<WorkflowNode["tasks"]>): WorkflowNode[] {
+  return tasks.map((t) => ({
+    id:          t.task_id ?? t.hash ?? "",
+    label:       t.sampleLabel ?? t.hash ?? t.task_id ?? "",
+    status:      t.status as WorkflowNode["status"],
+    exitCode:    t.exitCode,
+    duration:    t.duration,
+    hash:        t.hash,
+    task_id:     t.task_id,
+    native_id:   t.native_id,
+    workDir:     t.workDir,
+    commandPath: t.commandPath,
+    stdoutPath:  t.stdoutPath,
+    stderrPath:  t.stderrPath,
+  }));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -347,7 +374,7 @@ export default function App() {
       workflowTemplateId: RUNID_TO_TEMPLATE[opts.runSource] ?? opts.runSource,
       name: opts.name,
       runSource: opts.runSource,
-      status: "COMPLETED",
+      status: g.nodes.some((n) => n.status === "FAILED") ? "FAILED" : "COMPLETED",
       nodes: g.nodes,
       edges: g.edges,
       startedAt: new Date().toISOString(),
@@ -362,12 +389,25 @@ export default function App() {
     upsertRun(run);
     setActiveRunId(opts.runId);
     setFailureIdx(0);
-    const first = g.nodes.find((n) => n.status === "FAILED") ?? null;
-    setSelected(first);
-    if (first) {
-      setCentreKey((k) => k + 1);
-      setSummaryPane({ type: "debug-summary", nodeId: first.id });
+
+    if (isLocalRun(opts.runSource)) {
+      // Failure-first: pick the process node with the most failed tasks and
+      // open directly into the task/error inspection view.
+      const worst = pickWorstFailedNode(g.nodes);
+      setSelected(worst);
+      if (worst) {
+        setCentreKey((k) => k + 1);
+        if (worst.tasks && worst.tasks.length > 1) {
+          setSummaryPane({ type: "task-list", processLabel: worst.label, tasks: taskRecordsToNodes(worst.tasks) });
+        } else {
+          setSummaryPane({ type: "debug-summary", nodeId: worst.id });
+        }
+      } else {
+        setSummaryPane(null);
+      }
     } else {
+      // Sample and upload runs start with a clean graph state — no auto-selection.
+      setSelected(null);
       setSummaryPane(null);
     }
   }
@@ -725,9 +765,25 @@ export default function App() {
 
   function switchRun(runId: string) {
     setActiveRunId(runId);
-    setSelected(null);
     setFailureIdx(0);
-    setSummaryPane(null);
+    const run = workflowRuns.find((r) => r.id === runId);
+    if (run && isLocalRun(run.runSource)) {
+      const worst = pickWorstFailedNode(run.nodes);
+      setSelected(worst);
+      if (worst) {
+        setCentreKey((k) => k + 1);
+        if (worst.tasks && worst.tasks.length > 1) {
+          setSummaryPane({ type: "task-list", processLabel: worst.label, tasks: taskRecordsToNodes(worst.tasks) });
+        } else {
+          setSummaryPane({ type: "debug-summary", nodeId: worst.id });
+        }
+      } else {
+        setSummaryPane(null);
+      }
+    } else {
+      setSelected(null);
+      setSummaryPane(null);
+    }
   }
 
   async function archiveRun(run_id: string, archived: boolean) {
