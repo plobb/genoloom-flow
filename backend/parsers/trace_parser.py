@@ -1,7 +1,7 @@
-"""Parse a Nextflow trace.txt file into a process -> trace record mapping."""
+"""Parse a Nextflow trace.txt file into a process -> list[trace_record] mapping."""
 
-# FAILED takes priority over COMPLETED when a process has multiple tasks
-_PRIORITY = {"COMPLETED": 0, "FAILED": 1}
+# Statuses that indicate a task has a known outcome and should be counted
+_COUNTED_STATUSES = {"COMPLETED", "FAILED", "CACHED", "RUNNING"}
 
 # Trace column header -> internal record key
 _COLUMN_MAP = {
@@ -21,10 +21,10 @@ _COLUMN_MAP = {
 }
 
 
-def parse_trace_content(text: str) -> dict[str, dict]:
-    """Return {process_name: trace_record} for COMPLETED/FAILED tasks.
+def parse_trace_content(text: str) -> dict[str, list[dict]]:
+    """Return {process_name: [trace_records]} for all recognised task statuses.
 
-    When a process has multiple tasks, the FAILED record wins.
+    All rows for a process are retained so the caller can aggregate counts.
     """
     lines = text.splitlines()
     if not lines:
@@ -54,7 +54,7 @@ def parse_trace_content(text: str) -> dict[str, dict]:
         if header in headers
     }
 
-    result: dict[str, dict] = {}
+    result: dict[str, list[dict]] = {}
 
     for line in lines[1:]:
         if not line.strip():
@@ -62,7 +62,7 @@ def parse_trace_content(text: str) -> dict[str, dict]:
         cols = line.split("\t")
 
         raw_status = cols[status_idx].strip() if status_idx < len(cols) else ""
-        if raw_status not in _PRIORITY:
+        if raw_status not in _COUNTED_STATUSES:
             continue
 
         if process_idx is not None:
@@ -74,11 +74,6 @@ def parse_trace_content(text: str) -> dict[str, dict]:
         if not process:
             continue
 
-        # Skip this row if we already have a higher-priority record
-        existing = result.get(process)
-        if existing and _PRIORITY[existing["status"]] >= _PRIORITY[raw_status]:
-            continue
-
         record: dict[str, str] = {}
         for key, idx in col_indices.items():
             if idx < len(cols):
@@ -86,6 +81,6 @@ def parse_trace_content(text: str) -> dict[str, dict]:
                 if val and val != "-":
                     record[key] = val
 
-        result[process] = record
+        result.setdefault(process, []).append(record)
 
     return result

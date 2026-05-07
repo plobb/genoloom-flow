@@ -77,16 +77,40 @@ def _resolve_work_dir(work_base: Path, hash_val: str) -> Path:
 
 def _build_graph(
     parsed: dict,
-    status_map: dict[str, dict] | None = None,
+    status_map: dict[str, list[dict]] | None = None,
     work_base: Path | None = None,
 ) -> WorkflowGraph:
-    normalised = (
+    normalised: dict[str, list[dict]] = (
         {_normalise(k): v for k, v in status_map.items()} if status_map else {}
     )
 
     nodes = []
     for n in parsed["nodes"]:
-        rec: dict = normalised.get(_normalise(n["raw_label"])) or {}
+        rows: list[dict] = normalised.get(_normalise(n["raw_label"])) or []
+
+        # Aggregate counts across every task execution for this process
+        n_completed = sum(1 for r in rows if r.get("status") in ("COMPLETED", "CACHED"))
+        n_failed    = sum(1 for r in rows if r.get("status") == "FAILED")
+        n_running   = sum(1 for r in rows if r.get("status") == "RUNNING")
+        n_unknown   = len(rows) - n_completed - n_failed - n_running
+        total       = len(rows)
+
+        # Derive aggregate status from counts
+        if total == 0:
+            agg_status: str | None = None
+        elif n_failed > 0:
+            agg_status = "FAILED"
+        elif n_running > 0:
+            agg_status = "RUNNING"
+        elif n_completed == total:
+            agg_status = "COMPLETED"
+        else:
+            agg_status = "UNKNOWN"
+
+        # Pick a representative record for file path resolution:
+        # prefer first FAILED row (most useful for debugging), else first available.
+        failed_rows = [r for r in rows if r.get("status") == "FAILED"]
+        rec: dict = failed_rows[0] if failed_rows else (rows[0] if rows else {})
 
         exit_code: int | None = None
         if rec.get("exit"):
@@ -112,7 +136,7 @@ def _build_graph(
         nodes.append(WorkflowNode(
             id=n["id"],
             label=n["label"],
-            status=rec.get("status"),
+            status=agg_status,
             exitCode=exit_code,
             duration=rec.get("duration"),
             workDir=work_dir,
@@ -129,6 +153,11 @@ def _build_graph(
             peak_vmem=rec.get("peak_vmem"),
             rchar=rec.get("rchar"),
             wchar=rec.get("wchar"),
+            taskCount=total if total > 0 else None,
+            completedCount=n_completed if total > 0 else None,
+            failedCount=n_failed if total > 0 else None,
+            runningCount=n_running if total > 0 else None,
+            unknownCount=n_unknown if total > 0 else None,
         ))
 
     edges = [WorkflowEdge(source=e["source"], target=e["target"]) for e in parsed["edges"]]

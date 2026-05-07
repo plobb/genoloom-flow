@@ -28,6 +28,12 @@ class WorkflowNode(BaseModel):
     peak_vmem: Optional[str] = None
     rchar: Optional[str] = None
     wchar: Optional[str] = None
+    # Aggregate counts across all tasks for this process (None when no trace data)
+    taskCount: Optional[int] = None
+    completedCount: Optional[int] = None
+    failedCount: Optional[int] = None
+    runningCount: Optional[int] = None
+    unknownCount: Optional[int] = None
 
 
 class WorkflowEdge(BaseModel):

@@ -159,22 +159,39 @@ function deriveProcessGraph(
     keyToId.set(key, id);
 
     let worstRank = 0;
-    let completed = 0, failed = 0, running = 0, unknown = 0;
-    for (const c of children) {
-      const rank = PROC_RANK[c.status ?? "UNKNOWN"] ?? 0;
-      if (rank > worstRank) worstRank = rank;
-      const s = c.status;
-      if (s === "COMPLETED" || s === "CACHED") completed++;
-      else if (s === "FAILED") failed++;
-      else if (s === "RUNNING") running++;
-      else unknown++;
+    let completed = 0, failed = 0, running = 0, unknown = 0, total: number;
+
+    // When the sole child already carries backend-aggregated counts (uploaded dag+trace),
+    // use them directly rather than counting child nodes (which would always give 1).
+    const backendNode = children.length === 1 && children[0].taskCount !== undefined
+      ? children[0]
+      : null;
+
+    if (backendNode) {
+      completed = backendNode.completedCount ?? 0;
+      failed    = backendNode.failedCount    ?? 0;
+      running   = backendNode.runningCount   ?? 0;
+      unknown   = backendNode.unknownCount   ?? 0;
+      total     = backendNode.taskCount!;
+      worstRank = PROC_RANK[backendNode.status ?? "UNKNOWN"] ?? 0;
+    } else {
+      for (const c of children) {
+        const rank = PROC_RANK[c.status ?? "UNKNOWN"] ?? 0;
+        if (rank > worstRank) worstRank = rank;
+        const s = c.status;
+        if (s === "COMPLETED" || s === "CACHED") completed++;
+        else if (s === "FAILED") failed++;
+        else if (s === "RUNNING") running++;
+        else unknown++;
+      }
+      total = children.length;
     }
 
     procNodes.push({
       id,
       label: key,
       status: RANK_TO_STATUS[worstRank] as Status,
-      taskCount: children.length,
+      taskCount: total,
       completedCount: completed,
       failedCount: failed,
       runningCount: running,
@@ -256,6 +273,7 @@ export default function App() {
   const [error, setError]         = useState<string | null>(null);
   const [loading, setLoading]     = useState(false);
   const [traceFile, setTraceFile] = useState<File | null>(null);
+  const [dagFile, setDagFile]     = useState<File | null>(null);
   const [backendRuns, setBackendRuns] = useState<RunSummary[]>([]);
   const [processOnly, setProcessOnly] = useState(false);
   const [failureIdx, setFailureIdx]   = useState(0);
@@ -510,21 +528,27 @@ export default function App() {
     simCleanups.current.set(runId, () => clearInterval(pollTimer));
   }
 
+  async function uploadGraphWithOptionalTrace(dag: File, trace: File | null): Promise<WorkflowGraph> {
+    const form = new FormData();
+    form.append("file", dag);
+    if (trace) form.append("trace", trace);
+    const r = await fetch(`${API}/graph/upload`, { method: "POST", body: form });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `HTTP ${r.status}`);
+    }
+    return r.json();
+  }
+
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setError(null);
     setLoading(true);
-    const form = new FormData();
-    form.append("file", file);
-    if (traceFile) form.append("trace", traceFile);
     try {
-      const r = await fetch(`${API}/graph/upload`, { method: "POST", body: form });
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}));
-        throw new Error(body.detail ?? `HTTP ${r.status}`);
-      }
-      applyGraph(await r.json(), { runId: `upload-${file.name}`, name: file.name, runSource: "upload" });
+      const g = await uploadGraphWithOptionalTrace(file, traceFile);
+      setDagFile(file);
+      applyGraph(g, { runId: `upload-${file.name}`, name: file.name, runSource: "upload" });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -643,8 +667,11 @@ export default function App() {
     setSummaryPane(null);
   }
 
-  // Auto-load the backend sample DAG and past-runs list on first render
-  useEffect(() => { loadSample(); fetchBackendRuns(); }, []);
+  // Auto-load on first render. In viewer/public mode start the demo directly.
+  useEffect(() => {
+    if (VIEWER_MODE) { startDemo(); } else { loadSample(); }
+    fetchBackendRuns();
+  }, []);
 
   // Sync report/timeline availability from backend into workflowRuns whenever backendRuns updates
   useEffect(() => {
@@ -823,7 +850,24 @@ export default function App() {
           </div>
         </DropdownMenu>
 
-        <input ref={traceRef} type="file" accept=".txt,text/plain" style={{ display: "none" }} onChange={(e) => setTraceFile(e.target.files?.[0] ?? null)} />
+        <input ref={traceRef} type="file" accept=".txt,text/plain" style={{ display: "none" }} onChange={async (e) => {
+          const tf = e.target.files?.[0] ?? null;
+          setTraceFile(tf);
+          if (tf && dagFile && activeRun?.runSource === "upload") {
+            setError(null);
+            setLoading(true);
+            try {
+              const g = await uploadGraphWithOptionalTrace(dagFile, tf);
+              applyGraph(g, { runId: `upload-${dagFile.name}`, name: dagFile.name, runSource: "upload" });
+              setTraceFile(null);
+              if (traceRef.current) traceRef.current.value = "";
+            } catch (err) {
+              setError(String(err));
+            } finally {
+              setLoading(false);
+            }
+          }
+        }} />
         <input ref={fileRef} type="file" accept=".dot,text/plain" style={{ display: "none" }} onChange={handleFile} />
       </div>
 
