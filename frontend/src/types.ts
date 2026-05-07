@@ -1,5 +1,15 @@
 export type Status = "COMPLETED" | "FAILED" | "CACHED" | "SKIPPED" | "UNKNOWN" | "RUNNING";
 
+export type ErrorGroup = {
+  signature: string;
+  title: string;
+  count: number;
+  exampleMessage: string;
+  representativeHash?: string;
+  representativeStderrPath?: string;
+  sampleLabels: string[];
+};
+
 export type TaskRecord = {
   task_id?:     string;
   hash?:        string;
@@ -50,6 +60,8 @@ export type WorkflowNode = {
   wchar?: string;
   // Per-task records for drilldown (populated for aggregated process nodes)
   tasks?: TaskRecord[];
+  // Grouped failure signatures (only present when trace + work_base available)
+  errorGroups?: ErrorGroup[];
 };
 
 export type WorkflowEdge = {

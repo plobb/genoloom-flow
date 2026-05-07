@@ -449,8 +449,38 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
     }
 
     if (pane.type === "task-list") {
+      const errorGroups = node?.errorGroups ?? [];
       return (
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+          {errorGroups.length > 0 && (
+            <>
+              <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1, color: "#475569", textTransform: "uppercase" as const, marginBottom: 2 }}>
+                Error groups
+              </div>
+              {errorGroups.map((g) => (
+                <div key={g.signature} style={{ background: "#110a0a", border: "1px solid #3d1f1f", borderRadius: 4, padding: "8px 10px", display: "flex", flexDirection: "column" as const, gap: 4 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#fca5a5" }}>{g.title}</span>
+                    <span style={{ fontSize: 11, color: "#ef4444", fontWeight: 700 }}>×{g.count}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "'Fira Mono', 'Cascadia Code', 'Menlo', monospace", wordBreak: "break-all" as const }}>
+                    {g.exampleMessage}
+                  </div>
+                  {g.representativeStderrPath && (
+                    <div>
+                      <button
+                        style={{ fontSize: 10, padding: "1px 7px", borderRadius: 3, border: "1px solid #3d4468", background: "#2d3148", color: "#94a3b8", cursor: "pointer" }}
+                        onClick={() => onOpenPane?.({ type: "file", label: "Stderr", path: g.representativeStderrPath! })}
+                      >
+                        View stderr
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div style={{ height: 1, background: "#2d3148", margin: "4px 0 2px" }} />
+            </>
+          )}
           {pane.tasks.map((task) => {
             const sc = STATUS_COLOUR[task.status ?? "UNKNOWN"] ?? "#9ca3af";
             const files = [

@@ -198,6 +198,7 @@ function deriveProcessGraph(
       unknownCount: unknown,
       childNodeIds: children.map((c) => c.id),
       tasks: backendNode?.tasks,
+      errorGroups: backendNode?.errorGroups,
     });
   }
 

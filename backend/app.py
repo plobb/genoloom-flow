@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from models import WorkflowGraph, WorkflowNode, WorkflowEdge, TaskRecord
+from models import WorkflowGraph, WorkflowNode, WorkflowEdge, TaskRecord, ErrorGroup
 from parsers.dag_parser import parse_dag, parse_dag_content
 from parsers.trace_parser import parse_trace_content
 from runners.nextflow_runner import run_nf_core_demo, run_nf_core_rnaseq, get_run_status
@@ -40,6 +40,31 @@ def _bundle_work_base() -> Path | None:
         if candidate.is_dir():
             return candidate
     return None
+
+_STDERR_PEEK = 4096  # bytes read from stderr for signature extraction
+
+_ERROR_PATTERNS: list[tuple[str, str, list[str]]] = [
+    ("java-oom",          "Java heap memory error",  ["java.lang.outofmemoryerror", "gc overhead limit exceeded", "unable to allocate"]),
+    ("missing-file",      "Missing input file",       ["no such file or directory", "file not found", "no such file"]),
+    ("permission-denied", "Permission denied",        ["permission denied"]),
+    ("command-not-found", "Command not found",        ["command not found", "exit status 127"]),
+    ("container-error",   "Container image problem",  ["failed to pull image", "manifest unknown", "singularity", "apptainer", "docker: error response from daemon"]),
+]
+
+
+def _classify_stderr(content: str, exit_code: int | None) -> tuple[str, str, str]:
+    """Return (signature, title, example_message) from a small stderr excerpt."""
+    lower = content.lower()
+    for sig, title, triggers in _ERROR_PATTERNS:
+        for trigger in triggers:
+            if trigger in lower:
+                for line in content.splitlines():
+                    if trigger in line.lower() and line.strip():
+                        return sig, title, line.strip()[:200]
+                return sig, title, title
+    code = str(exit_code) if exit_code is not None else "unknown"
+    return f"exit-{code}", f"Unexpected exit ({code})", f"Process exited with status {code}"
+
 
 _ARTEFACTS = {
     "dag":      "dag.dot",
@@ -182,6 +207,37 @@ def _build_graph(
                 stderrPath=r_stderr,
             ))
 
+        # Build error groups from failed tasks (only when work_base is available so paths exist)
+        error_groups: list[ErrorGroup] = []
+        if work_base is not None:
+            sig_buckets: dict[str, dict] = {}
+            for tr in task_records:
+                if tr.status != "FAILED" or not tr.stderrPath:
+                    continue
+                try:
+                    raw = Path(tr.stderrPath).read_bytes()[:_STDERR_PEEK]
+                    content = raw.decode("utf-8", errors="replace")
+                except Exception:
+                    content = ""
+                sig, title, example = _classify_stderr(content, tr.exitCode)
+                if sig not in sig_buckets:
+                    sig_buckets[sig] = {
+                        "signature": sig,
+                        "title": title,
+                        "count": 0,
+                        "exampleMessage": example,
+                        "representativeHash": tr.hash,
+                        "representativeStderrPath": tr.stderrPath,
+                        "sampleLabels": [],
+                    }
+                sig_buckets[sig]["count"] += 1
+                if tr.sampleLabel:
+                    sig_buckets[sig]["sampleLabels"].append(tr.sampleLabel)
+            error_groups = [
+                ErrorGroup(**g)
+                for g in sorted(sig_buckets.values(), key=lambda x: -x["count"])
+            ]
+
         nodes.append(WorkflowNode(
             id=n["id"],
             label=n["label"],
@@ -208,6 +264,7 @@ def _build_graph(
             runningCount=n_running if total > 0 else None,
             unknownCount=n_unknown if total > 0 else None,
             tasks=task_records if task_records else None,
+            errorGroups=error_groups if error_groups else None,
         ))
 
     edges = [WorkflowEdge(source=e["source"], target=e["target"]) for e in parsed["edges"]]

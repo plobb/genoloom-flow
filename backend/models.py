@@ -4,6 +4,16 @@ from pydantic import BaseModel
 Status = Literal["COMPLETED", "FAILED", "CACHED", "SKIPPED", "UNKNOWN"]
 
 
+class ErrorGroup(BaseModel):
+    signature: str
+    title: str
+    count: int
+    exampleMessage: str
+    representativeHash: Optional[str] = None
+    representativeStderrPath: Optional[str] = None
+    sampleLabels: List[str] = []
+
+
 class TaskRecord(BaseModel):
     task_id:     Optional[str] = None
     hash:        Optional[str] = None
@@ -50,6 +60,8 @@ class WorkflowNode(BaseModel):
     unknownCount: Optional[int] = None
     # Per-task records for drilldown (all trace rows for this process)
     tasks: Optional[List["TaskRecord"]] = None
+    # Grouped failure signatures (only present when trace + work_base available)
+    errorGroups: Optional[List["ErrorGroup"]] = None
 
 
 class WorkflowEdge(BaseModel):
