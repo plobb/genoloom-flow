@@ -282,6 +282,7 @@ export default function App() {
   const [running, setRunning]         = useState(false);
   const [summaryPane, setSummaryPane] = useState<SummaryPane | null>(null);
   const [openMenu, setOpenMenu]       = useState<string | null>(null);
+  const [bundleAvailable, setBundleAvailable] = useState(false);
   const [mode, setMode]               = useState<"debugger" | "workbench">("debugger");
   const [layout, setLayout]           = useState<"force" | "dag">("dag");
   const [graphView, setGraphView]     = useState<"process" | "full">("process");
@@ -541,6 +542,23 @@ export default function App() {
     return r.json();
   }
 
+  async function loadBundle() {
+    setError(null);
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/api/bundle/graph`);
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail ?? `HTTP ${r.status}`);
+      }
+      applyGraph(await r.json(), { runId: "bundle", name: "Local bundle", runSource: "local-nextflow" });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -671,6 +689,11 @@ export default function App() {
 
   // Auto-load on first render. In viewer/public mode start the demo directly.
   useEffect(() => {
+    fetch(`${API}/api/bundle/status`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d?.dag) setBundleAvailable(true); })
+      .catch(() => {});
+
     if (VIEWER_MODE) {
       const runId = startDemo();
       fetchBackendRuns();
@@ -841,6 +864,10 @@ export default function App() {
           <MenuDivider />
           <MenuItem onClick={() => { traceRef.current?.click(); setOpenMenu(null); }} disabled={loading}>
             {traceFile ? `✓ trace.txt staged` : "Add trace.txt"}
+          </MenuItem>
+          <MenuDivider />
+          <MenuItem onClick={() => { loadBundle(); setOpenMenu(null); }} disabled={loading || !bundleAvailable}>
+            {bundleAvailable ? "Open local bundle" : "Open local bundle (none mounted)"}
           </MenuItem>
         </DropdownMenu>
 

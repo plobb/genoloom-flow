@@ -7,6 +7,7 @@ services:
       - ./runs:/app/runs
       - ./work:/app/work
       - ./sample_runs:/app/sample_runs
+      - ${BUNDLE_PATH:-./sample_bundle}:/app/bundle:ro
     environment:
       CORS_ORIGINS: "http://localhost:5173"
 

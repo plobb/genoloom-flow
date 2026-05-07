@@ -29,7 +29,17 @@ _SAMPLE_TRACE = os.path.join(_SAMPLE_DIR, "trace.txt")
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _RUNS_DIR = _PROJECT_ROOT / "runs"
 _WORK_DIR = _PROJECT_ROOT / "work"
+_BUNDLE_DIR = Path(os.getenv("BUNDLE_DIR", "/app/bundle"))
 _FILE_LIMIT = 200 * 1024  # 200 KB
+
+
+def _bundle_work_base() -> Path | None:
+    """Return the work directory inside the mounted bundle, if available."""
+    for sub in ("work_dir", "work"):
+        candidate = _BUNDLE_DIR / sub
+        if candidate.is_dir():
+            return candidate
+    return None
 
 _ARTEFACTS = {
     "dag":      "dag.dot",
@@ -229,8 +239,12 @@ def read_task_file(path: str = Query(...)) -> PlainTextResponse:
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid path")
 
-    if not str(resolved).startswith(str(_WORK_DIR.resolve())):
-        raise HTTPException(status_code=403, detail="Access denied: path is outside work/")
+    allowed = [str(_WORK_DIR.resolve())]
+    wb = _bundle_work_base()
+    if wb is not None:
+        allowed.append(str(wb.resolve()))
+    if not any(str(resolved).startswith(p) for p in allowed):
+        raise HTTPException(status_code=403, detail="Access denied: path is outside allowed directories")
 
     if not resolved.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -329,6 +343,32 @@ def trigger_nf_core_demo():
 def trigger_nf_core_rnaseq():
     """Run nf-core/rnaseq with the test profile and return run artefact paths."""
     return run_nf_core_rnaseq()
+
+
+@app.get("/api/bundle/status")
+def bundle_status():
+    """Report whether a debug bundle is mounted and which artefacts are present."""
+    available = _BUNDLE_DIR.is_dir()
+    return {
+        "available":  available,
+        "dag":        (_BUNDLE_DIR / "dag.dot").exists()       if available else False,
+        "trace":      (_BUNDLE_DIR / "trace.txt").exists()     if available else False,
+        "report":     (_BUNDLE_DIR / "report.html").exists()   if available else False,
+        "timeline":   (_BUNDLE_DIR / "timeline.html").exists() if available else False,
+    }
+
+
+@app.get("/api/bundle/graph", response_model=WorkflowGraph)
+def bundle_graph():
+    """Parse dag.dot and trace.txt from the mounted bundle and return graph JSON."""
+    dag_path = _BUNDLE_DIR / "dag.dot"
+    if not dag_path.exists():
+        raise HTTPException(status_code=404, detail="No dag.dot found in bundle")
+    status_map: dict[str, list[dict]] | None = None
+    trace_path = _BUNDLE_DIR / "trace.txt"
+    if trace_path.exists():
+        status_map = parse_trace_content(trace_path.read_text())
+    return _build_graph(parse_dag(str(dag_path)), status_map, work_base=_bundle_work_base())
 
 
 @app.post("/graph/upload", response_model=WorkflowGraph)
