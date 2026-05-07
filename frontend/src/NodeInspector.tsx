@@ -244,10 +244,26 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary, ro
 
   const hasPathSection = node.workDir || fileButtons.length > 0;
 
-  // Resolve child task nodes for process nodes (childNodeIds reference raw run.nodes)
-  const childTasks: WorkflowNode[] = (node.childNodeIds && run?.nodes)
-    ? node.childNodeIds.flatMap((id) => { const t = run!.nodes.find((n) => n.id === id); return t ? [t] : []; })
-    : [];
+  // Prefer backend per-task records (aggregated upload/local runs with trace);
+  // fall back to childNodeIds lookup in run.nodes (demo/simulated runs).
+  const childTasks: WorkflowNode[] = node.tasks
+    ? node.tasks.map((t): WorkflowNode => ({
+        id:          t.task_id ?? t.hash ?? "",
+        label:       t.sampleLabel ?? t.hash ?? t.task_id ?? "",
+        status:      t.status as WorkflowNode["status"],
+        exitCode:    t.exitCode,
+        duration:    t.duration,
+        hash:        t.hash,
+        task_id:     t.task_id,
+        native_id:   t.native_id,
+        workDir:     t.workDir,
+        commandPath: t.commandPath,
+        stdoutPath:  t.stdoutPath,
+        stderrPath:  t.stderrPath,
+      }))
+    : (node.childNodeIds && run?.nodes)
+        ? node.childNodeIds.flatMap((id) => { const t = run!.nodes.find((n) => n.id === id); return t ? [t] : []; })
+        : [];
   const singleTaskFiles = childTasks.length === 1
     ? [
         { label: "Command", path: childTasks[0].commandPath, content: childTasks[0].commandContent },

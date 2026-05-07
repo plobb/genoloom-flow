@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from models import WorkflowGraph, WorkflowNode, WorkflowEdge
+from models import WorkflowGraph, WorkflowNode, WorkflowEdge, TaskRecord
 from parsers.dag_parser import parse_dag, parse_dag_content
 from parsers.trace_parser import parse_trace_content
 from runners.nextflow_runner import run_nf_core_demo, run_nf_core_rnaseq, get_run_status
@@ -75,6 +75,14 @@ def _resolve_work_dir(work_base: Path, hash_val: str) -> Path:
     return work_base / hash_val  # exact fallback
 
 
+def _extract_sample_label(name: str) -> str | None:
+    """Extract sample ID from a Nextflow task name like 'PROCESS (sample_id)'."""
+    if " (" in name and name.endswith(")"):
+        label = name.split(" (", 1)[1][:-1].strip()
+        return label or None
+    return None
+
+
 def _build_graph(
     parsed: dict,
     status_map: dict[str, list[dict]] | None = None,
@@ -133,6 +141,37 @@ def _build_graph(
             stdout_path  = work_dir + "/.command.out"
             stderr_path  = work_dir + "/.command.err"
 
+        # Build per-task records for drilldown (paths resolved per-row when work_base available)
+        task_records: list[TaskRecord] = []
+        for row in rows:
+            r_hash = row.get("hash")
+            r_work_dir = r_cmd = r_stdout = r_stderr = None
+            if r_hash and work_base is not None:
+                r_resolved = _resolve_work_dir(work_base, r_hash)
+                r_work_dir = str(r_resolved)
+                r_cmd      = r_work_dir + "/.command.sh"
+                r_stdout   = r_work_dir + "/.command.out"
+                r_stderr   = r_work_dir + "/.command.err"
+            r_exit: int | None = None
+            if row.get("exit"):
+                try:
+                    r_exit = int(row["exit"])
+                except ValueError:
+                    pass
+            task_records.append(TaskRecord(
+                task_id=row.get("task_id"),
+                hash=r_hash,
+                native_id=row.get("native_id"),
+                sampleLabel=_extract_sample_label(row.get("name", "")),
+                status=row.get("status"),
+                exitCode=r_exit,
+                duration=row.get("duration"),
+                workDir=r_work_dir,
+                commandPath=r_cmd,
+                stdoutPath=r_stdout,
+                stderrPath=r_stderr,
+            ))
+
         nodes.append(WorkflowNode(
             id=n["id"],
             label=n["label"],
@@ -158,6 +197,7 @@ def _build_graph(
             failedCount=n_failed if total > 0 else None,
             runningCount=n_running if total > 0 else None,
             unknownCount=n_unknown if total > 0 else None,
+            tasks=task_records if task_records else None,
         ))
 
     edges = [WorkflowEdge(source=e["source"], target=e["target"]) for e in parsed["edges"]]

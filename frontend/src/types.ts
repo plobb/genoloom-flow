@@ -1,5 +1,19 @@
 export type Status = "COMPLETED" | "FAILED" | "CACHED" | "SKIPPED" | "UNKNOWN" | "RUNNING";
 
+export type TaskRecord = {
+  task_id?:     string;
+  hash?:        string;
+  native_id?:   string;
+  sampleLabel?: string;
+  status?:      Status;
+  exitCode?:    number;
+  duration?:    string;
+  workDir?:     string;
+  commandPath?: string;
+  stdoutPath?:  string;
+  stderrPath?:  string;
+};
+
 export type WorkflowNode = {
   id: string;
   label: string;
@@ -34,6 +48,8 @@ export type WorkflowNode = {
   peak_vmem?: string;
   rchar?: string;
   wchar?: string;
+  // Per-task records for drilldown (populated for aggregated process nodes)
+  tasks?: TaskRecord[];
 };
 
 export type WorkflowEdge = {

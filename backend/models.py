@@ -4,6 +4,20 @@ from pydantic import BaseModel
 Status = Literal["COMPLETED", "FAILED", "CACHED", "SKIPPED", "UNKNOWN"]
 
 
+class TaskRecord(BaseModel):
+    task_id:     Optional[str] = None
+    hash:        Optional[str] = None
+    native_id:   Optional[str] = None
+    sampleLabel: Optional[str] = None
+    status:      Optional[str] = None
+    exitCode:    Optional[int] = None
+    duration:    Optional[str] = None
+    workDir:     Optional[str] = None
+    commandPath: Optional[str] = None
+    stdoutPath:  Optional[str] = None
+    stderrPath:  Optional[str] = None
+
+
 class WorkflowNode(BaseModel):
     id: str
     label: str
@@ -34,6 +48,8 @@ class WorkflowNode(BaseModel):
     failedCount: Optional[int] = None
     runningCount: Optional[int] = None
     unknownCount: Optional[int] = None
+    # Per-task records for drilldown (all trace rows for this process)
+    tasks: Optional[List["TaskRecord"]] = None
 
 
 class WorkflowEdge(BaseModel):

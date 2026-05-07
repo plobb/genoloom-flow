@@ -8,6 +8,7 @@ _COLUMN_MAP = {
     "task_id":   "task_id",
     "hash":      "hash",
     "native_id": "native_id",
+    "name":      "name",
     "status":    "status",
     "exit":      "exit",
     "submit":    "submit",
