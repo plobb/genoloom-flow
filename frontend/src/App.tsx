@@ -895,10 +895,10 @@ export default function App() {
     sidebar:       { width: 180, minWidth: 180, background: "#131620", borderRight: "1px solid #2d3148", display: "flex", flexDirection: "column", overflowY: "auto", flexShrink: 0 },
     sidebarTitle:  { fontSize: 10, fontWeight: 600, color: "#475569", letterSpacing: 1, padding: "10px 12px 6px", textTransform: "uppercase" as const, borderBottom: "1px solid #1e2130" },
     sidebarEmpty:  { fontSize: 12, color: "#475569", padding: "12px", fontStyle: "italic" },
-    runItem:       { padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid #1e2130", display: "flex", flexDirection: "column" as const, gap: 2 },
-    runItemActive: { background: "#1e2130", borderLeft: "2px solid #4f46e5", paddingLeft: 10 },
-    runName:       { fontSize: 12, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const },
-    runMeta:       { display: "flex", alignItems: "center", gap: 5 },
+    runItem:       { padding: "10px 12px", cursor: "pointer", borderBottom: "1px solid #171c2c", display: "flex", flexDirection: "column" as const, gap: 3 },
+    runItemActive: { background: "#1c2240", borderLeft: "3px solid #6366f1", paddingLeft: 9 },
+    runName:       { fontSize: 12, fontWeight: 500, lineHeight: 1.3, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const },
+    runMeta:       { display: "flex", alignItems: "center", gap: 5, marginTop: 1 },
     runStatusLabel:{ fontSize: 10, fontWeight: 500, letterSpacing: 0.3 },
     runSourceBadge:{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, borderRadius: 3, padding: "1px 4px", border: "1px solid" },
     footer:  { background: "#1e2130", borderTop: "1px solid #2d3148", padding: "8px 20px", fontSize: 12, color: "#475569", textAlign: "center" as const },
@@ -1155,13 +1155,13 @@ export default function App() {
                         <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
                           <button
                             style={{
-                              padding: "1px 4px",
-                              fontSize: 9,
-                              lineHeight: 1.4,
-                              background: "transparent",
+                              padding: "2px 5px",
+                              fontSize: 10,
+                              lineHeight: 1.3,
+                              background: "#1e2340",
                               border: "1px solid #3d4468",
                               borderRadius: 3,
-                              color: "#475569",
+                              color: "#64748b",
                               cursor: "pointer",
                             }}
                             onClick={(e) => { e.stopPropagation(); archiveRun(run.run_id, !run.archived); }}
@@ -1172,13 +1172,13 @@ export default function App() {
                           {run.archived && (
                             <button
                               style={{
-                                padding: "1px 4px",
-                                fontSize: 9,
-                                lineHeight: 1.4,
-                                background: "transparent",
+                                padding: "2px 5px",
+                                fontSize: 10,
+                                lineHeight: 1.3,
+                                background: "#1e2340",
                                 border: "1px solid #7f1d1d",
                                 borderRadius: 3,
-                                color: "#ef4444",
+                                color: "#f87171",
                                 cursor: "pointer",
                               }}
                               onClick={(e) => {
@@ -1197,12 +1197,13 @@ export default function App() {
                       <span style={{
                         ...s.runSourceBadge,
                         color: srcCfg.color,
-                        borderColor: `${srcCfg.color}50`,
-                        background: `${srcCfg.color}18`,
+                        borderColor: `${srcCfg.color}40`,
+                        background: `${srcCfg.color}14`,
                       }}>
                         {srcCfg.label}
                       </span>
-                      <span style={{ ...s.runStatusLabel, color: statusColor }}>
+                      <span style={{ width: 5, height: 5, borderRadius: "50%", background: statusColor, display: "inline-block", flexShrink: 0, opacity: 0.85 }} />
+                      <span style={{ ...s.runStatusLabel, color: statusColor, opacity: 0.75 }}>
                         {displayStatus}
                       </span>
                     </div>
@@ -1219,28 +1220,33 @@ export default function App() {
                   </div>
                 );
               })}
-              {[...transientRuns].reverse().map((run) => (
-                <div
-                  key={run.id}
-                  style={run.id === activeRunId ? { ...s.runItem, ...s.runItemActive } : s.runItem}
-                  onClick={() => switchRun(run.id)}
-                >
-                  <div style={s.runName} title={run.name}>{run.name}</div>
-                  <div style={s.runMeta}>
-                    <span style={{
-                      ...s.runSourceBadge,
-                      color: RUN_SOURCE_CONFIG[run.runSource].color,
-                      borderColor: `${RUN_SOURCE_CONFIG[run.runSource].color}50`,
-                      background: `${RUN_SOURCE_CONFIG[run.runSource].color}18`,
-                    }}>
-                      {RUN_SOURCE_CONFIG[run.runSource].label}
-                    </span>
-                    <span style={{ ...s.runStatusLabel, color: RUN_STATUS_COLOUR[run.status] }}>
-                      {run.status}
-                    </span>
+              {[...transientRuns].reverse().map((run) => {
+                const tSrcCfg = RUN_SOURCE_CONFIG[run.runSource];
+                const tStatusColor = RUN_STATUS_COLOUR[run.status];
+                return (
+                  <div
+                    key={run.id}
+                    style={run.id === activeRunId ? { ...s.runItem, ...s.runItemActive } : s.runItem}
+                    onClick={() => switchRun(run.id)}
+                  >
+                    <div style={s.runName} title={run.name}>{run.name}</div>
+                    <div style={s.runMeta}>
+                      <span style={{
+                        ...s.runSourceBadge,
+                        color: tSrcCfg.color,
+                        borderColor: `${tSrcCfg.color}40`,
+                        background: `${tSrcCfg.color}14`,
+                      }}>
+                        {tSrcCfg.label}
+                      </span>
+                      <span style={{ width: 5, height: 5, borderRadius: "50%", background: tStatusColor, display: "inline-block", flexShrink: 0, opacity: 0.85 }} />
+                      <span style={{ ...s.runStatusLabel, color: tStatusColor, opacity: 0.75 }}>
+                        {run.status}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </>
           )}
           {hasArchivedRuns && (
