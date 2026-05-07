@@ -6,27 +6,26 @@
 
 **Debug Nextflow pipelines. Instantly.**
 
-GenoLoom Flow is a local-first Nextflow workflow visualiser, debugger, and lightweight nf-core workbench. It helps you inspect pipeline structure, follow execution state, identify failures, and explore run artefacts without jumping between terminals, work directories, and reports.
+GenoLoom Flow is a local-first Nextflow run inspector and failure debugger. It provides a persistent run library, grouped failure analysis, and inline log inspection -- without sending data outside your environment.
 
 **Live demo: https://genoloom-flow.fly.dev/**
 
 ---
 
-## What it does
+## Current capabilities
 
-GenoLoom Flow helps you:
-
-- Visualise Nextflow DAGs interactively
-- Switch between **Process view** and **Full DAG view**
-- Track task status across a run
-- Identify failed steps and follow failure paths
-- Jump directly to **root cause** nodes
-- Drill down from process → task → logs
-- Inspect command, stdout, stderr inline
+- Import Nextflow run archives and maintain a persistent run library
+- Visualise DAGs interactively (Process view and Full DAG view)
+- Browse grouped failure signatures across all tasks in a run
+- Drill down from process to individual tasks and their logs
+- Inspect command scripts, stdout, and stderr inline
 - View Nextflow reports and timelines in-app
-- Run local nf-core workflows (demo + rnaseq test)
-- Compare multiple runs side-by-side
-- Explain common failure patterns from stderr — missing files, permission errors, Java memory errors, command-not-found, and container image issues
+- Archive and delete runs from the library
+- Mount a run directory without importing
+- Run local nf-core workflows and capture artefacts (native host only)
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for setup, storage, and operational guidance.
+Bundle helper: [scripts/create_genoloom_bundle.sh](scripts/create_genoloom_bundle.sh)
 
 ---
 
@@ -45,7 +44,32 @@ When something fails, useful information is scattered across:
 - timeline.html
 - the Nextflow work directory
 
-GenoLoom Flow brings all of this into a single visual debugging surface so you can move quickly from **failure → understanding → fix**.
+GenoLoom Flow brings all of this into a single visual debugging surface. Failures are grouped by error signature at import time so you can triage at scale -- 144 tasks failing with the same Java OOM error appears as one entry, not 144 separate log hunts. The goal is to move quickly from **failure → understanding → fix**.
+
+---
+
+## Run import workflow
+
+1. Run Nextflow on your cluster or workstation with DAG and trace flags
+2. Package outputs into a bundle
+3. Import the archive via **Upload > Import run archive (.tar.gz)**
+4. Inspect grouped failures, browse task logs, view reports
+5. Archive or delete the run when the investigation is complete
+
+```bash
+# Generate artefacts
+nextflow run <pipeline> \
+  -with-dag dag.dot \
+  -with-trace trace.txt \
+  -with-report report.html \
+  -with-timeline timeline.html
+
+# Bundle for import
+./scripts/create_genoloom_bundle.sh -d /path/to/run my_run_name
+
+# Or manually
+tar -czf my_run.tar.gz dag.dot trace.txt work_dir/
+```
 
 ---
 
@@ -53,171 +77,96 @@ GenoLoom Flow brings all of this into a single visual debugging surface so you c
 
 ### Graph views
 
-- **Process view**: clean, high-level overview
+- **Process view**: high-level overview with aggregate task counts and failure status
 - **Full DAG view**: task-level detail
 - Seamless switching between both
 
-### Failure debugging
+### Failure analysis
 
-- Follow failure paths through the workflow
-- Highlight upstream/downstream context
+- Grouped error signatures across all failed tasks (Java OOM, missing file, permission denied, container errors, and exit code fallback)
 - Root-cause detection with jump navigation
+- Failed task count and top error signature shown in the sidebar without opening the run
 
 ### Task drill-down
 
 - Expand a process into its constituent tasks
-- Click a task to jump to its exact node
-- Hover tasks to highlight their position in the graph
+- Click a task to jump to its position in the graph
+- Hover tasks to highlight their node
 
 ### Artefact inspection
 
-- View:
-  - Command
-  - Stdout
-  - Stderr
-  - Report
-  - Timeline
-- All inside the app, no context switching
+- Command script, stdout, stderr -- all inline
+- Nextflow HTML report and timeline in-app
+- No context switching to terminals or work directories
 
-### Local execution
+### Persistent run library
 
-- Run:
-  - nf-core/demo
-  - nf-core/rnaseq (test profile)
-- Automatically capture DAG, trace, and artefacts
+- Imported runs stored in `./runs/`, survive container restarts
+- Archive runs to hide without deleting
+- Delete archived runs permanently from the UI
+- Duplicate import names automatically suffixed
 
 ---
 
-## Demo
+## Quick start
 
-👉 [Demo script](docs/demo-script.md)
+```bash
+git clone https://github.com/phillobb/genoloom-flow.git
+cd genoloom-flow
+docker compose up --build
+```
 
-**Live failure demo: https://genoloom-flow.fly.dev/**
+| Service  | URL                   |
+|----------|-----------------------|
+| Frontend | http://localhost:5173 |
+| Backend  | http://localhost:8000 |
 
-The hosted demo opens directly into an RNA-seq failure scenario and highlights a missing GATK reference dictionary (`.dict`) error.
-
----
-
-## Demo modes
-
-### Sample run
-Loads a bundled example graph and trace.
-
-### Simulated workflow
-Frontend-only demo with animated node updates.
-
-### Local nf-core workflows
-Runs real pipelines locally and visualises execution:
-- nf-core/demo
-- nf-core/rnaseq (test)
+Run import, the persistent run library, task drill-down, and log inspection all work in this mode. Pipeline execution via the **Run** menu requires a native host setup -- see [Running locally](#running-locally).
 
 ---
 
 ## Running locally
 
-### Backend
+Without Docker, run backend and frontend separately. This mode enables pipeline execution via the **Run** menu and **Workbench** (requires Nextflow and Docker installed on the host).
 
 ```bash
+# Backend
 cd backend
 pip install -r requirements.txt
 uvicorn app:app --reload
-```
+# http://localhost:8000
 
-Backend:
-```
-http://localhost:8000
-```
-
-### Frontend
-
-```bash
+# Frontend
 cd frontend
 npm install
 npm run dev
-```
-
-Frontend:
-```
-http://localhost:5173
+# http://localhost:5173
 ```
 
 ---
 
-## Typical workflow
+## Deployment and operations
 
-1. Start backend and frontend
-2. Open http://localhost:5173
-3. Run or load a workflow
-4. Switch to Process view
-5. Identify a failed node
-6. Jump to root cause
-7. Drill into tasks
-8. Inspect logs and outputs
+Full deployment, storage management, HPC usage, and cleanup documentation: **[DEPLOYMENT.md](DEPLOYMENT.md)**
 
----
-
-## Generating Nextflow artefacts
-
-```bash
-nextflow run <pipeline> \
-  -with-dag dag.dot \
-  -with-trace trace.txt \
-  -with-report report.html \
-  -with-timeline timeline.html
-```
-
----
-
-## Docker local viewer mode
-
-Run the frontend and backend together without any local Python or Node setup:
-
-```bash
-docker compose up --build
-```
-
-| Service  | URL                     |
-|----------|-------------------------|
-| Frontend | http://localhost:5173   |
-| Backend  | http://localhost:8000   |
-
-**What works in this mode:**
-
-- Viewing the bundled sample run
-- Uploading a `dag.dot` (and optional `trace.txt`) to visualise any Nextflow run
-- Process view, task drill-down, root-cause detection, and summary panels
-
-**What does not work in this mode:**
-
-- Running nf-core pipelines (`Run` menu / Workbench) — Nextflow execution requires a native host setup with Nextflow and Docker installed. See [Running locally](#running-locally) for that workflow.
-
-The UI reflects this automatically: in Docker viewer mode (`VITE_VIEWER_MODE=true`) the **Run** menu trigger is greyed out and disabled, Workbench cards show a **View only** badge instead of **Runnable**, and a notice is displayed explaining why execution is unavailable.
-
-**Environment variables** (set in `docker-compose.yml`, override as needed):
-
-| Variable            | Default                   | Purpose                                         |
-|---------------------|---------------------------|-------------------------------------------------|
-| `VITE_API_URL`      | `http://localhost:8000`   | Backend URL seen by the browser                 |
-| `VITE_VIEWER_MODE`  | `true`                    | Disables pipeline execution controls in the UI  |
-| `CORS_ORIGINS`      | `http://localhost:5173`   | Origins the backend will accept                 |
-
-## Production container
-
-The repo includes a root `Dockerfile` for single-container deployment. It builds the React frontend with Vite and serves the static output through FastAPI, so a single container handles everything.
-
-This is used for the Fly.io demo at https://genoloom-flow.fly.dev/.
+Includes:
+- Persistent storage layout
+- Mounted bundle mode (`BUNDLE_PATH`)
+- HPC bundle-and-import workflow
+- Archive and delete procedures
+- Configuration reference
+- Known limitations
 
 ---
 
 ## Roadmap
 
-- Live trace streaming
-- Improved error extraction
+- Live run monitoring during active Nextflow execution
+- Searchable and filterable run library
+- Workflow execution and workbench integration
+- AI-assisted failure explanation from stderr
 - nf-core catalogue integration
-- Parameter UI (nextflow_schema.json)
-- Containerised deployment
-- Cloud execution (AWS)
-- Optional LLM-assisted debugging
+- Multi-user deployment
 
 ---
 
