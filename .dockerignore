@@ -1,0 +1,29 @@
+# flyctl launch added from .gitignore
+# Python
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# Node
+**/frontend/node_modules
+**/frontend/dist
+
+# OS/editor
+**/.DS_Store
+**/.vscode
+
+# Local runtime artefacts
+**/runs/*
+!**/runs/.gitkeep
+**/work
+**/.nextflow
+**/.nextflow*
+**/.nextflow.log*
+**/*:Zone.Identifier
+
+# Node
+**/frontend/node_modules
+**/frontend/dist
+**/*:Zone.Identifier
+fly.toml

@@ -8,6 +8,8 @@
 
 GenoLoom Flow is a local-first Nextflow workflow visualiser, debugger, and lightweight nf-core workbench. It helps you inspect pipeline structure, follow execution state, identify failures, and explore run artefacts without jumping between terminals, work directories, and reports.
 
+**Live demo: https://genoloom-flow.fly.dev/**
+
 ---
 
 ## What it does
@@ -24,6 +26,7 @@ GenoLoom Flow helps you:
 - View Nextflow reports and timelines in-app
 - Run local nf-core workflows (demo + rnaseq test)
 - Compare multiple runs side-by-side
+- Explain common failure patterns from stderr — missing files, permission errors, Java memory errors, command-not-found, and container image issues
 
 ---
 
@@ -88,6 +91,11 @@ GenoLoom Flow brings all of this into a single visual debugging surface so you c
 ## Demo
 
 👉 [Demo script](docs/demo-script.md)
+
+**Live failure demo: https://genoloom-flow.fly.dev/**
+
+The hosted demo opens directly into an RNA-seq failure scenario and highlights a missing GATK reference dictionary (`.dict`) error.
+
 ---
 
 ## Demo modes
@@ -192,6 +200,12 @@ The UI reflects this automatically: in Docker viewer mode (`VITE_VIEWER_MODE=tru
 | `VITE_API_URL`      | `http://localhost:8000`   | Backend URL seen by the browser                 |
 | `VITE_VIEWER_MODE`  | `true`                    | Disables pipeline execution controls in the UI  |
 | `CORS_ORIGINS`      | `http://localhost:5173`   | Origins the backend will accept                 |
+
+## Production container
+
+The repo includes a root `Dockerfile` for single-container deployment. It builds the React frontend with Vite and serves the static output through FastAPI, so a single container handles everything.
+
+This is used for the Fly.io demo at https://genoloom-flow.fly.dev/.
 
 ---
 
