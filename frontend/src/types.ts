@@ -80,6 +80,7 @@ export type RunSummary = {
   display_name?: string;
   name?: string;
   status?: string;
+  source?: string;
   artefacts: {
     dag: boolean;
     trace: boolean;
@@ -99,7 +100,11 @@ export type WorkflowTemplate = {
   description?: string;
 };
 
-export type RunSource = "sample" | "simulated" | "upload" | "local-nextflow";
+export type RunSource = "sample" | "simulated" | "upload" | "local-nextflow" | "imported";
+
+export function isLocalRun(source: RunSource): boolean {
+  return source === "local-nextflow" || source === "imported";
+}
 
 export type SummaryPane =
   | { type: "debug-summary"; nodeId: string }

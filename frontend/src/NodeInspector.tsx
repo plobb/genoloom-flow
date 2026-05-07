@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { WorkflowNode, WorkflowRun, RunSource, SummaryPane } from "./types";
+import { WorkflowNode, WorkflowRun, RunSource, SummaryPane, isLocalRun } from "./types";
 
 const STATUS_COLOUR: Record<string, string> = {
   COMPLETED: "#22c55e",
@@ -12,10 +12,11 @@ const STATUS_COLOUR: Record<string, string> = {
 type Row = [string, string | number | undefined];
 
 const RUN_SOURCE_CONFIG: Record<RunSource, { label: string; color: string }> = {
-  "sample":         { label: "SAMPLE", color: "#60a5fa" },
-  "simulated":      { label: "DEMO",   color: "#fbbf24" },
-  "upload":         { label: "UPLOAD", color: "#a78bfa" },
-  "local-nextflow": { label: "LOCAL",  color: "#4ade80" },
+  "sample":         { label: "SAMPLE",   color: "#60a5fa" },
+  "simulated":      { label: "DEMO",     color: "#fbbf24" },
+  "upload":         { label: "UPLOAD",   color: "#a78bfa" },
+  "local-nextflow": { label: "LOCAL",    color: "#4ade80" },
+  "imported":       { label: "IMPORTED", color: "#22d3ee" },
 };
 
 const RUN_STATUS_COLOUR: Record<WorkflowRun["status"], string> = {
@@ -23,10 +24,12 @@ const RUN_STATUS_COLOUR: Record<WorkflowRun["status"], string> = {
 };
 
 const WORKFLOW_DISPLAY: Record<string, string> = {
-  "nf-core-demo": "nf-core/demo",
-  "rnaseq-demo":  "RNA-seq demo",
-  "uploaded":     "Uploaded",
-  "sample":       "Sample",
+  "nf-core-demo":   "nf-core/demo",
+  "rnaseq-demo":    "RNA-seq demo",
+  "uploaded":       "Uploaded files",
+  "local-nextflow": "Mounted run",
+  "imported":       "Imported run",
+  "sample":         "Sample",
 };
 
 type Props = {
@@ -133,7 +136,7 @@ export default function NodeInspector({ node, run, onDeselect, onOpenSummary, ro
     }
 
     const src = RUN_SOURCE_CONFIG[run.runSource];
-    const isLocal = run.runSource === "local-nextflow";
+    const isLocal = isLocalRun(run.runSource);
     const workflowName = WORKFLOW_DISPLAY[run.workflowTemplateId] ?? run.workflowTemplateId;
 
     const runRows: [string, React.ReactNode][] = [

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Graph from "./Graph";
 import NodeInspector from "./NodeInspector";
 import SummaryPanel from "./SummaryPanel";
-import { WorkflowGraph, WorkflowNode, WorkflowEdge, WorkflowRun, WorkflowTemplate, RunSummary, RunSource, SummaryPane, Status } from "./types";
+import { WorkflowGraph, WorkflowNode, WorkflowEdge, WorkflowRun, WorkflowTemplate, RunSummary, RunSource, SummaryPane, Status, isLocalRun } from "./types";
 import { getInitialDemoGraph, runDemoSimulation } from "./demoWorkflow";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -19,11 +19,18 @@ const RUN_STATUS_COLOUR: Record<WorkflowRun["status"], string> = {
   FAILED:    "#ef4444",
 };
 
+const RUNID_TO_TEMPLATE: Partial<Record<RunSource, string>> = {
+  "local-nextflow": "local-nextflow",
+  "imported":       "imported",
+  "upload":         "uploaded",
+};
+
 const RUN_SOURCE_CONFIG: Record<RunSource, { label: string; color: string }> = {
-  "sample":         { label: "SAMPLE", color: "#60a5fa" },
-  "simulated":      { label: "DEMO",   color: "#fbbf24" },
-  "upload":         { label: "UPLOAD", color: "#a78bfa" },
-  "local-nextflow": { label: "LOCAL",  color: "#4ade80" },
+  "sample":         { label: "SAMPLE",   color: "#60a5fa" },
+  "simulated":      { label: "DEMO",     color: "#fbbf24" },
+  "upload":         { label: "UPLOAD",   color: "#a78bfa" },
+  "local-nextflow": { label: "LOCAL",    color: "#4ade80" },
+  "imported":       { label: "IMPORTED", color: "#22d3ee" },
 };
 
 function PulsingBanner({ message }: { message: string }) {
@@ -289,8 +296,9 @@ export default function App() {
   const [graphView, setGraphView]     = useState<"process" | "full">("process");
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   // --- refs ------------------------------------------------------------------
-  const fileRef  = useRef<HTMLInputElement>(null);
-  const traceRef = useRef<HTMLInputElement>(null);
+  const fileRef       = useRef<HTMLInputElement>(null);
+  const traceRef      = useRef<HTMLInputElement>(null);
+  const importRef     = useRef<HTMLInputElement>(null);
   // Track per-run simulation cleanup functions so they can be cancelled on unmount
   const simCleanups = useRef(new Map<string, () => void>());
 
@@ -338,7 +346,7 @@ export default function App() {
   }) {
     const run: WorkflowRun = {
       id: opts.runId,
-      workflowTemplateId: "uploaded",
+      workflowTemplateId: RUNID_TO_TEMPLATE[opts.runSource] ?? opts.runSource,
       name: opts.name,
       runSource: opts.runSource,
       status: "COMPLETED",
@@ -346,9 +354,8 @@ export default function App() {
       edges: g.edges,
       startedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
-      // Infer artefact availability from the parsed data for local runs
-      dagAvailable: opts.runSource === "local-nextflow" ? true : undefined,
-      traceAvailable: opts.runSource === "local-nextflow"
+      dagAvailable: isLocalRun(opts.runSource) ? true : undefined,
+      traceAvailable: isLocalRun(opts.runSource)
         ? g.nodes.some((n) => n.hash !== undefined)
         : undefined,
       reportAvailable:   opts.reportAvailable,
@@ -401,10 +408,11 @@ export default function App() {
         throw new Error(body.detail ?? `HTTP ${r.status}`);
       }
       const summary = backendRuns.find((s) => s.run_id === run_id);
+      const runSource: RunSource = summary?.source === "imported" ? "imported" : "local-nextflow";
       applyGraph(await r.json(), {
         runId: run_id,
-        name: run_id,
-        runSource: "local-nextflow",
+        name: summary?.display_name ?? summary?.name ?? run_id,
+        runSource,
         reportAvailable:   summary?.artefacts.report,
         timelineAvailable: summary?.artefacts.timeline,
       });
@@ -552,11 +560,47 @@ export default function App() {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.detail ?? `HTTP ${r.status}`);
       }
-      applyGraph(await r.json(), { runId: "bundle", name: "Local bundle", runSource: "local-nextflow" });
+      applyGraph(await r.json(), { runId: "bundle", name: "Mounted run", runSource: "local-nextflow" });
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function importBundleTarGz(file: File) {
+    setError(null);
+    setLoading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const r = await fetch(`${API}/api/runs/import`, { method: "POST", body: form });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail ?? `HTTP ${r.status}`);
+      }
+      const meta = await r.json() as {
+        run_id: string; display_name: string;
+        report: boolean; timeline: boolean;
+      };
+      const gr = await fetch(`${API}/api/runs/${meta.run_id}`);
+      if (!gr.ok) {
+        const body = await gr.json().catch(() => ({}));
+        throw new Error(body.detail ?? `HTTP ${gr.status}`);
+      }
+      applyGraph(await gr.json(), {
+        runId: meta.run_id,
+        name: meta.display_name,
+        runSource: "imported",
+        reportAvailable:   meta.report,
+        timelineAvailable: meta.timeline,
+      });
+      fetchBackendRuns();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+      if (importRef.current) importRef.current.value = "";
     }
   }
 
@@ -756,7 +800,7 @@ export default function App() {
     sidebarTitle:  { fontSize: 10, fontWeight: 600, color: "#475569", letterSpacing: 1, padding: "10px 12px 6px", textTransform: "uppercase" as const, borderBottom: "1px solid #1e2130" },
     sidebarEmpty:  { fontSize: 12, color: "#475569", padding: "12px", fontStyle: "italic" },
     runItem:       { padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid #1e2130", display: "flex", flexDirection: "column" as const, gap: 2 },
-    runItemActive: { background: "#1e2130" },
+    runItemActive: { background: "#1e2130", borderLeft: "2px solid #4f46e5", paddingLeft: 10 },
     runName:       { fontSize: 12, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const },
     runMeta:       { display: "flex", alignItems: "center", gap: 5 },
     runStatusLabel:{ fontSize: 10, fontWeight: 500, letterSpacing: 0.3 },
@@ -787,7 +831,7 @@ export default function App() {
                 disabled={loading}
                 onChange={(e) => { if (e.target.value) loadRun(e.target.value); }}
               >
-                <option value="">Past runs…</option>
+                <option value="">Saved runs…</option>
                 {visibleRuns.map((r) => {
                   const label = r.display_name ?? r.name ?? r.run_id.slice(0, 8);
                   const status = r.status ? ` · ${r.status.toLowerCase()}` : "";
@@ -868,7 +912,11 @@ export default function App() {
           </MenuItem>
           <MenuDivider />
           <MenuItem onClick={() => { loadBundle(); setOpenMenu(null); }} disabled={loading || !bundleAvailable}>
-            {bundleAvailable ? "Open local bundle" : "Open local bundle (none mounted)"}
+            {bundleAvailable ? "Open mounted run" : "Open mounted run (none mounted)"}
+          </MenuItem>
+          <MenuDivider />
+          <MenuItem onClick={() => { importRef.current?.click(); setOpenMenu(null); }} disabled={loading}>
+            Import run archive (.tar.gz)
           </MenuItem>
         </DropdownMenu>
 
@@ -908,6 +956,13 @@ export default function App() {
           }
         }} />
         <input ref={fileRef} type="file" accept=".dot,text/plain" style={{ display: "none" }} onChange={handleFile} />
+        <input
+          ref={importRef}
+          type="file"
+          accept=".tar.gz,application/gzip"
+          style={{ display: "none" }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) importBundleTarGz(f); }}
+        />
       </div>
 
       {/* ── Workbench mode ── */}
@@ -972,16 +1027,16 @@ export default function App() {
       {/* ── Info strip + body (Debugger mode) ── */}
       {mode === "debugger" && <>
       <div style={s.infoStrip}>
-        <div style={s.infoTitle}>GenoLoom Flow Viewer</div>
+        <div style={s.infoTitle}>GenoLoom Flow</div>
         <div style={s.infoSub}>
-          Upload a Nextflow dag.dot file to visualise and explore your workflow graph interactively.
+          Import a run archive or open a mounted run to inspect and debug your Nextflow pipeline.
         </div>
         <div style={{ fontSize: 13, color: "#475569", marginBottom: 6 }}>
-          Quickly identify failed steps and understand workflow dependencies
+          Identify failed tasks, browse error groups, and inspect task logs.
         </div>
         <div style={s.infoHint}>
-          Tip: Generate a dag.dot file using:{" "}
-          <code style={{ color: "#94a3b8" }}>nextflow run &lt;pipeline&gt; -with-dag dag.dot</code>
+          Tip: bundle a run with:{" "}
+          <code style={{ color: "#94a3b8" }}>tar -czf run.tar.gz dag.dot trace.txt work_dir/</code>
         </div>
       </div>
 
@@ -992,7 +1047,7 @@ export default function App() {
         <div style={s.sidebar}>
           <div style={s.sidebarTitle}>Runs</div>
           {workflowRuns.length === 0 ? (
-            <div style={s.sidebarEmpty}>{VIEWER_MODE ? "Use Demo or Upload to load a run." : "No runs yet"}</div>
+            <div style={s.sidebarEmpty}>{VIEWER_MODE ? "Use Demo or Open to load a run." : "Import a run archive to get started."}</div>
           ) : (
             [...workflowRuns].reverse().map((run) => (
               <div
