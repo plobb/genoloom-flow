@@ -213,7 +213,17 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
   const prevStatusRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
-    if (!svgRef.current || nodes.length === 0) return;
+    if (!svgRef.current) return;
+
+    const svg = d3.select(svgRef.current);
+    svg.selectAll("*").remove();
+
+    if (nodes.length === 0) {
+      // Reset status tracking so switching back to a run with nodes doesn't
+      // trigger spurious ripple animations on every node.
+      prevStatusRef.current = new Map();
+      return;
+    }
 
     // Detect which nodes changed status since the last render
     const changedIds = new Set<string>();
@@ -224,9 +234,6 @@ export default function Graph({ nodes, edges, selectedId, onSelect, onDeselect, 
       }
     }
     prevStatusRef.current = new Map(nodes.map((n) => [n.id, n.status ?? "UNKNOWN"]));
-
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
 
     const width = svgRef.current.clientWidth || 800;
     const height = svgRef.current.clientHeight || 600;

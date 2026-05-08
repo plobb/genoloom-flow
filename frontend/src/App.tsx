@@ -346,9 +346,27 @@ export default function App() {
   // --- derived ---------------------------------------------------------------
   const activeRun = workflowRuns.find((r) => r.id === activeRunId) ?? null;
 
+  // When a local/imported run has no trace (traceAvailable === false), strip
+  // status and all count fields before they reach the graph.  Without this,
+  // backend-supplied defaults or DAG-file attributes bleed through as
+  // task-count badges and colour status that belong to a different run.
+  const displayNodes: WorkflowNode[] = activeRun?.traceAvailable === false
+    ? activeRun.nodes.map((n) => ({
+        ...n,
+        status:         undefined,
+        taskCount:      undefined,
+        completedCount: undefined,
+        failedCount:    undefined,
+        runningCount:   undefined,
+        unknownCount:   undefined,
+        tasks:          undefined,
+        errorGroups:    undefined,
+      }))
+    : (activeRun?.nodes ?? []);
+
   const displayGraph = graphView === "process" && activeRun
-    ? deriveProcessGraph(activeRun.nodes, activeRun.edges)
-    : { nodes: activeRun?.nodes ?? [], edges: activeRun?.edges ?? [] };
+    ? deriveProcessGraph(displayNodes, activeRun.edges)
+    : { nodes: displayNodes, edges: activeRun?.edges ?? [] };
 
   const failedNodes = displayGraph.nodes.filter((n) => n.status === "FAILED");
   const rootCauseNode = selected?.status === "FAILED"
