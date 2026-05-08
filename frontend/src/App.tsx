@@ -330,6 +330,14 @@ export default function App() {
   const importRef     = useRef<HTMLInputElement>(null);
   // Track per-run simulation cleanup functions so they can be cancelled on unmount
   const simCleanups = useRef(new Map<string, () => void>());
+  // URL deep-link: capture initial params once at mount (before any state updates)
+  const initialUrlRef = useRef({
+    run:       new URLSearchParams(window.location.search).get("run"),
+    node:      new URLSearchParams(window.location.search).get("node"),
+    attempted: false,
+  });
+  // Set to true once fetchBackendRuns completes, so the restore effect knows the list is definitive
+  const backendRunsLoadedRef = useRef(false);
 
   useEffect(() => {
     return () => { simCleanups.current.forEach((fn) => fn()); };
@@ -368,6 +376,7 @@ export default function App() {
   function applyGraph(g: WorkflowGraph, opts: {
     runId: string; name: string; runSource: RunSource;
     reportAvailable?: boolean; timelineAvailable?: boolean;
+    overrideNodeId?: string; // URL-specified node wins over failure-first
   }) {
     const run: WorkflowRun = {
       id: opts.runId,
@@ -389,6 +398,32 @@ export default function App() {
     upsertRun(run);
     setActiveRunId(opts.runId);
     setFailureIdx(0);
+
+    // URL node override: try raw nodes first (by id or label), then derived process graph (by label).
+    if (opts.overrideNodeId) {
+      const rawTarget = g.nodes.find(
+        (n) => n.id === opts.overrideNodeId || n.label === opts.overrideNodeId,
+      );
+      const target: WorkflowNode | null = rawTarget ?? (() => {
+        const pg = deriveProcessGraph(g.nodes, g.edges);
+        return pg.nodes.find((n) => n.label === opts.overrideNodeId) ?? null;
+      })();
+      if (target) {
+        setSelected(target);
+        setCentreKey((k) => k + 1);
+        if (target.status === "FAILED") {
+          if (target.tasks && target.tasks.length > 1) {
+            setSummaryPane({ type: "task-list", processLabel: target.label, tasks: taskRecordsToNodes(target.tasks) });
+          } else {
+            setSummaryPane({ type: "debug-summary", nodeId: target.id });
+          }
+        } else {
+          setSummaryPane(null);
+        }
+        return; // skip failure-first
+      }
+      // node not found in graph → fall through to normal behaviour
+    }
 
     if (isLocalRun(opts.runSource)) {
       // Failure-first: pick the process node with the most failed tasks and
@@ -416,7 +451,10 @@ export default function App() {
   async function fetchBackendRuns() {
     try {
       const r = await fetch(`${API}/api/runs`);
-      if (r.ok) setBackendRuns(await r.json());
+      if (r.ok) {
+        backendRunsLoadedRef.current = true;
+        setBackendRuns(await r.json());
+      }
     } catch { /* best-effort */ }
   }
 
@@ -436,7 +474,7 @@ export default function App() {
     }
   }
 
-  async function loadRun(run_id: string) {
+  async function loadRun(run_id: string, overrideNodeId?: string) {
     setError(null);
     setLoading(true);
     try {
@@ -453,6 +491,7 @@ export default function App() {
         runSource,
         reportAvailable:   summary?.artefacts.report,
         timelineAvailable: summary?.artefacts.timeline,
+        overrideNodeId,
       });
     } catch (e) {
       setError(String(e));
@@ -819,22 +858,30 @@ export default function App() {
   }
 
   // Auto-load on first render. In viewer/public mode start the demo directly.
+  // If the URL contains ?run=, skip the default load — the restore effect handles it.
   useEffect(() => {
     fetch(`${API}/api/bundle/status`)
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d?.dag) setBundleAvailable(true); })
       .catch(() => {});
 
+    const hasUrlRun = Boolean(initialUrlRef.current.run);
+
     if (VIEWER_MODE) {
-      const runId = startDemo();
+      if (!hasUrlRun) {
+        const runId = startDemo();
+        fetchBackendRuns();
+        return () => {
+          simCleanups.current.get(runId)?.();
+          simCleanups.current.delete(runId);
+          setWorkflowRuns((prev) => prev.filter((r) => r.id !== runId));
+        };
+      }
       fetchBackendRuns();
-      return () => {
-        simCleanups.current.get(runId)?.();
-        simCleanups.current.delete(runId);
-        setWorkflowRuns((prev) => prev.filter((r) => r.id !== runId));
-      };
+      return;
     }
-    loadSample();
+
+    if (!hasUrlRun) loadSample();
     fetchBackendRuns();
   }, []);
 
@@ -848,6 +895,57 @@ export default function App() {
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendRuns]);
+
+  // URL restore: when backendRuns first loads, restore ?run= and optionally ?node=.
+  // Runs only once (attempted flag prevents re-entry on subsequent backendRuns updates).
+  useEffect(() => {
+    const ref = initialUrlRef.current;
+    if (ref.attempted || !ref.run || !backendRunsLoadedRef.current) return;
+    ref.attempted = true;
+    const inBackend = backendRuns.find((r) => r.run_id === ref.run);
+    if (inBackend) {
+      loadRun(ref.run, ref.node ?? undefined);
+    } else if (!VIEWER_MODE) {
+      loadSample(); // run not found — fall back to default startup
+    } else {
+      startDemo();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendRuns]);
+
+  // URL sync — active run: update ?run= when the active run changes.
+  // Only local/imported runs are linkable; transient runs (sample, demo, upload) clear the param.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    // workflowRuns is read from closure at effect time; safe because applyGraph batches
+    // upsertRun + setActiveRunId together, so the run is always present when this fires.
+    const run = workflowRuns.find((r) => r.id === activeRunId);
+    if (run && isLocalRun(run.runSource)) {
+      params.set("run", activeRunId!);
+    } else {
+      params.delete("run");
+      params.delete("node");
+    }
+    const qs = params.toString();
+    history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+  // workflowRuns intentionally omitted: it is always updated in the same batch as activeRunId
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRunId]);
+
+  // URL sync — selected node: update ?node= when selection changes.
+  // Derived process-view nodes (id = "proc-N") use their label as the stable URL key.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (selected?.id) {
+      const nodeParam = selected.id.startsWith("proc-") ? selected.label : selected.id;
+      params.set("node", nodeParam);
+    } else {
+      params.delete("node");
+    }
+    const qs = params.toString();
+    history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
 
   // Status banner shown as an overlay on the graph while a local run is in progress
   const localRunBanner = (() => {
