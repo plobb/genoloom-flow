@@ -138,7 +138,23 @@ Include `report.html` and `timeline.html` if available:
 tar -czf run.tar.gz dag.dot trace.txt report.html timeline.html work_dir/
 ```
 
-A helper script is provided at `scripts/create_genoloom_bundle.sh` (see below).
+A helper script is provided at `scripts/create_genoloom_bundle.sh`:
+
+```bash
+./scripts/create_genoloom_bundle.sh \
+  --run-dir /path/to/nextflow/output \
+  --name my_run_name \
+  --out-dir /scratch/bundles
+
+# With optional imports-dir for a running GenoLoom instance:
+./scripts/create_genoloom_bundle.sh \
+  --run-dir /path/to/nextflow/output \
+  --name my_run_name \
+  --out-dir /scratch/bundles \
+  --imports-dir /srv/genoloom/runs/imports
+```
+
+Run `./scripts/create_genoloom_bundle.sh --help` for full usage.
 
 ### What `work_dir/` enables
 
@@ -169,6 +185,15 @@ nextflow run my-pipeline \
 
 ```bash
 # On the HPC node or login node
+./scripts/create_genoloom_bundle.sh \
+  --run-dir /path/to/pipeline/output \
+  --name my_pipeline_run \
+  --out-dir /scratch/bundles
+```
+
+Or manually:
+
+```bash
 tar -czf my_pipeline_run.tar.gz \
   dag.dot \
   trace.txt \
@@ -176,7 +201,7 @@ tar -czf my_pipeline_run.tar.gz \
   work/
 ```
 
-If `work/` is very large, you can limit to only the failed task directories. The `scripts/create_genoloom_bundle.sh` helper can do this selectively.
+If `work/` is very large, you can exclude it with `--no-work` and still get DAG structure and task counts from `trace.txt`. Task log inspection will be unavailable without the work directory.
 
 ### Step 3 - Copy to your workstation
 

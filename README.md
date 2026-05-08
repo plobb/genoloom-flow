@@ -65,7 +65,10 @@ nextflow run <pipeline> \
   -with-timeline timeline.html
 
 # Bundle for import
-./scripts/create_genoloom_bundle.sh -d /path/to/run my_run_name
+./scripts/create_genoloom_bundle.sh \
+  --run-dir /path/to/run \
+  --name my_run_name \
+  --out-dir .
 
 # Or manually
 tar -czf my_run.tar.gz dag.dot trace.txt work_dir/
