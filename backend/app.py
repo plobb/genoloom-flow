@@ -34,6 +34,7 @@ _SAMPLE_TRACE = os.path.join(_SAMPLE_DIR, "trace.txt")
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _RUNS_DIR = _PROJECT_ROOT / "runs"
+_IMPORTS_DIR = _RUNS_DIR / "imports"
 _WORK_DIR = _PROJECT_ROOT / "work"
 _BUNDLE_DIR = Path(os.getenv("BUNDLE_DIR", "/app/bundle"))
 _FILE_LIMIT = 200 * 1024  # 200 KB
@@ -560,30 +561,21 @@ def trigger_nf_core_rnaseq():
     return run_nf_core_rnaseq()
 
 
-@app.post("/api/runs/import")
-async def import_bundle(file: UploadFile = File(...)):
-    """Accept a .tar.gz Nextflow bundle, extract it safely, and return run metadata."""
-    filename = file.filename or "bundle.tar.gz"
-    if not filename.endswith(".tar.gz"):
-        raise HTTPException(status_code=400, detail="Only .tar.gz archives are supported")
-
+def _import_archive_bytes(raw: bytes, filename: str) -> dict:
+    """Extract a .tar.gz archive into a new run directory and return import metadata."""
     run_id  = str(uuid.uuid4())
     run_dir = _RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    raw = await file.read()
     try:
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
             run_dir_str = str(run_dir.resolve())
             for member in tf.getmembers():
-                # Reject symlinks entirely — they can escape the target directory.
                 if member.issym() or member.islnk():
                     raise HTTPException(status_code=400, detail=f"Archive contains symlinks: {member.name!r}")
-                # Reject absolute paths and path-traversal components.
                 m_path = Path(member.name)
                 if m_path.is_absolute() or ".." in m_path.parts:
                     raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member.name!r}")
-                # Confirm the resolved destination stays inside run_dir.
                 target = (run_dir / m_path).resolve()
                 if not str(target).startswith(run_dir_str):
                     raise HTTPException(status_code=400, detail=f"Path traversal detected: {member.name!r}")
@@ -610,7 +602,6 @@ async def import_bundle(file: UploadFile = File(...)):
         except Exception:
             pass
 
-    # Derive a human-readable name from the uploaded filename, deduplicated.
     display_name = filename
     for suffix in (".tar.gz", ".tgz"):
         if display_name.endswith(suffix):
@@ -621,7 +612,7 @@ async def import_bundle(file: UploadFile = File(...)):
     meta = {
         "display_name": display_name,
         "source":       "imported",
-        "status":       "completed",  # overridden below if trace data is available
+        "status":       "completed",
         "created_at":   datetime.now(timezone.utc).isoformat(),
     }
     meta.update(_compute_run_summary(run_dir))
@@ -636,6 +627,48 @@ async def import_bundle(file: UploadFile = File(...)):
         "timeline":     (run_dir / "timeline.html").exists(),
         "work_dir":     any((run_dir / s).is_dir() for s in ("work_dir", "work")),
     }
+
+
+@app.post("/api/runs/import")
+async def import_bundle(file: UploadFile = File(...)):
+    """Accept a .tar.gz Nextflow bundle, extract it safely, and return run metadata."""
+    filename = file.filename or "bundle.tar.gz"
+    if not filename.endswith(".tar.gz"):
+        raise HTTPException(status_code=400, detail="Only .tar.gz archives are supported")
+    raw = await file.read()
+    return _import_archive_bytes(raw, filename)
+
+
+@app.get("/api/imports")
+def list_imports():
+    """List .tar.gz bundles available in the imports folder (runs/imports/)."""
+    if not _IMPORTS_DIR.is_dir():
+        return {"bundles": []}
+    bundles = []
+    for p in sorted(_IMPORTS_DIR.iterdir()):
+        name = p.name
+        if name.endswith(".tar.gz") and not name.endswith(".partial"):
+            stat = p.stat()
+            bundles.append({
+                "filename":    name,
+                "size_bytes":  stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            })
+    return {"bundles": bundles}
+
+
+@app.post("/api/imports/{filename}")
+def import_from_folder(filename: str):
+    """Import a specific .tar.gz bundle from the imports folder by filename."""
+    if not filename.endswith(".tar.gz"):
+        raise HTTPException(status_code=400, detail="Only .tar.gz archives are supported")
+    safe_path = (_IMPORTS_DIR / filename).resolve()
+    if not str(safe_path).startswith(str(_IMPORTS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not safe_path.exists():
+        raise HTTPException(status_code=404, detail=f"Bundle not found: {filename!r}")
+    raw = safe_path.read_bytes()
+    return _import_archive_bytes(raw, filename)
 
 
 @app.get("/api/bundle/status")

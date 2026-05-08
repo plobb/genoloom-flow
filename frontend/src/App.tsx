@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Graph from "./Graph";
 import NodeInspector from "./NodeInspector";
 import SummaryPanel from "./SummaryPanel";
-import { WorkflowGraph, WorkflowNode, WorkflowEdge, WorkflowRun, WorkflowTemplate, RunSummary, RunSource, SummaryPane, Status, isLocalRun } from "./types";
+import { WorkflowGraph, WorkflowNode, WorkflowEdge, WorkflowRun, WorkflowTemplate, RunSummary, RunSource, SummaryPane, Status, isLocalRun, ImportableBundle } from "./types";
 import { getInitialDemoGraph, runDemoSimulation } from "./demoWorkflow";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -324,6 +324,8 @@ export default function App() {
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   const [showArchived, setShowArchived]         = useState(false);
   const [hoveredSidebarId, setHoveredSidebarId] = useState<string | null>(null);
+  const [importableFiles, setImportableFiles]   = useState<ImportableBundle[] | null>(null);
+  const [importsLoading, setImportsLoading]     = useState(false);
   // --- refs ------------------------------------------------------------------
   const fileRef       = useRef<HTMLInputElement>(null);
   const traceRef      = useRef<HTMLInputElement>(null);
@@ -696,6 +698,55 @@ export default function App() {
     } finally {
       setLoading(false);
       if (importRef.current) importRef.current.value = "";
+    }
+  }
+
+  async function fetchImports() {
+    setImportsLoading(true);
+    try {
+      const r = await fetch(`${API}/api/imports`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json() as { bundles: ImportableBundle[] };
+      setImportableFiles(data.bundles);
+    } catch {
+      setImportableFiles([]);
+    } finally {
+      setImportsLoading(false);
+    }
+  }
+
+  async function importFromFolder(filename: string) {
+    setError(null);
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/api/imports/${encodeURIComponent(filename)}`, { method: "POST" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail ?? `HTTP ${r.status}`);
+      }
+      const meta = await r.json() as {
+        run_id: string; display_name: string;
+        report: boolean; timeline: boolean;
+      };
+      const gr = await fetch(`${API}/api/runs/${meta.run_id}`);
+      if (!gr.ok) {
+        const body = await gr.json().catch(() => ({}));
+        throw new Error(body.detail ?? `HTTP ${gr.status}`);
+      }
+      applyGraph(await gr.json(), {
+        runId: meta.run_id,
+        name: meta.display_name,
+        runSource: "imported",
+        reportAvailable:   meta.report,
+        timelineAvailable: meta.timeline,
+      });
+      fetchBackendRuns();
+      // Remove the imported file from the scan list so it's not re-imported accidentally
+      setImportableFiles((prev) => prev?.filter((b) => b.filename !== filename) ?? prev);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1106,6 +1157,45 @@ export default function App() {
           <MenuItem onClick={() => { importRef.current?.click(); setOpenMenu(null); }} disabled={loading}>
             Import run archive (.tar.gz)
           </MenuItem>
+          <MenuDivider />
+          <MenuItem onClick={() => { fetchImports(); }} disabled={importsLoading || loading}>
+            {importsLoading ? "Scanning…" : "Scan imports folder"}
+          </MenuItem>
+          {importableFiles !== null && (
+            <div style={{ maxHeight: 180, overflowY: "auto", marginTop: 2 }}>
+              {importableFiles.length === 0 ? (
+                <div style={{ padding: "5px 10px 6px", fontSize: 11, color: "#475569", lineHeight: 1.4 }}>
+                  No bundles found in runs/imports/
+                </div>
+              ) : (
+                importableFiles.map((b) => (
+                  <div
+                    key={b.filename}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 10px" }}
+                  >
+                    <span style={{
+                      flex: 1, fontSize: 11, color: "#94a3b8",
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }} title={b.filename}>
+                      {b.filename.replace(/\.tar\.gz$/, "")}
+                    </span>
+                    <button
+                      onClick={() => { importFromFolder(b.filename); setOpenMenu(null); }}
+                      disabled={loading}
+                      style={{
+                        fontSize: 10, padding: "2px 7px", borderRadius: 3, flexShrink: 0,
+                        border: "1px solid #3d4468", background: "#2d3148",
+                        color: loading ? "#475569" : "#94a3b8",
+                        cursor: loading ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      Import
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </DropdownMenu>
 
         {/* ── Run ── */}

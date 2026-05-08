@@ -108,6 +108,12 @@ export type WorkflowTemplate = {
   description?: string;
 };
 
+export type ImportableBundle = {
+  filename: string;
+  size_bytes: number;
+  modified_at: string;
+};
+
 export type RunSource = "sample" | "simulated" | "upload" | "local-nextflow" | "imported";
 
 export function isLocalRun(source: RunSource): boolean {
