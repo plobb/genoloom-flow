@@ -167,6 +167,8 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
   const [fileError, setFileError]     = useState<string | null>(null);
   const [wordWrap, setWordWrap]       = useState(false);
   const [copied, setCopied]           = useState(false);
+  const [linkCopied, setLinkCopied]         = useState(false);
+  const [summaryCopied, setSummaryCopied]   = useState(false);
   const [closeHover, setCloseHover]   = useState(false);
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
 
@@ -200,9 +202,89 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
 
   async function copyToClipboard() {
     if (!fileContent) return;
-    await navigator.clipboard.writeText(fileContent);
+    try {
+      await navigator.clipboard.writeText(fileContent);
+    } catch {
+      try {
+        const el = document.createElement("textarea");
+        el.value = fileContent;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      } catch { /* clipboard unavailable */ }
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function copyLink() {
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      try {
+        const el = document.createElement("textarea");
+        el.value = url;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      } catch { /* clipboard unavailable */ }
+    }
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 1500);
+  }
+
+  function downloadFile() {
+    if (!fileContent) return;
+    const filename = pane.type === "file"
+      ? (pane.label ?? pane.path.split("/").pop() ?? "file.txt")
+      : "file.txt";
+    const blob = new Blob([fileContent], { type: "text/plain" });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(blobUrl);
+  }
+
+  async function copySummary() {
+    if (!node) return;
+    const lines: string[] = [];
+    if (run?.name) lines.push(`Run: ${run.name}`);
+    lines.push(`Process: ${node.label}`);
+    if (node.status) lines.push(`Status: ${node.status}`);
+    if (node.exitCode !== undefined && node.exitCode !== null) lines.push(`Exit code: ${node.exitCode}`);
+    if (node.taskCount !== undefined) {
+      const parts: string[] = [`Total: ${node.taskCount}`];
+      if (node.completedCount) parts.push(`Completed: ${node.completedCount}`);
+      if (node.failedCount)    parts.push(`Failed: ${node.failedCount}`);
+      if (node.runningCount)   parts.push(`Running: ${node.runningCount}`);
+      lines.push(`Tasks — ${parts.join(", ")}`);
+    }
+    if (node.errorGroups && node.errorGroups.length > 0) {
+      const top = node.errorGroups[0];
+      lines.push(`Top error: ${top.title} ×${top.count}`);
+      if (top.exampleMessage) lines.push(`  ${top.exampleMessage}`);
+    }
+    lines.push(`URL: ${window.location.href}`);
+    const text = lines.join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      try {
+        const el = document.createElement("textarea");
+        el.value = text;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      } catch { /* clipboard unavailable */ }
+    }
+    setSummaryCopied(true);
+    setTimeout(() => setSummaryCopied(false), 1500);
   }
 
   const title = (() => {
@@ -372,6 +454,13 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
           })()}
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: "auto", paddingTop: 16, borderTop: "1px solid #2d3148" }}>
             <button
+              onClick={copySummary}
+              style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 500, border: `1px solid ${summaryCopied ? "#22c55e" : "#3d4468"}`, background: "#2d3148", color: summaryCopied ? "#22c55e" : "#94a3b8", cursor: "pointer" }}
+              title="Copy a plain-text summary of this investigation"
+            >
+              {summaryCopied ? "Copied!" : "Copy summary"}
+            </button>
+            <button
               disabled
               title="AI interpretation is not yet available"
               style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 500, border: "1px solid #3d4468", background: "#2d3148", color: "#475569", cursor: "not-allowed", opacity: 0.6 }}
@@ -426,6 +515,13 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
                   onClick={copyToClipboard}
                 >
                   {copied ? "Copied!" : "Copy"}
+                </button>
+                <button
+                  style={{ fontSize: 11, padding: "1px 7px", borderRadius: 4, border: "1px solid #3d4468", background: "#2d3148", color: "#94a3b8", cursor: "pointer" }}
+                  onClick={downloadFile}
+                  title="Download file"
+                >
+                  Download
                 </button>
               </div>
               <pre style={{
@@ -559,6 +655,13 @@ export default function SummaryPanel({ pane, onClose, node, run, onOpenPane, onS
               Open in tab ↗
             </a>
           )}
+          <button
+            style={{ fontSize: 11, padding: "1px 7px", borderRadius: 4, border: `1px solid ${linkCopied ? "#22c55e" : "#3d4468"}`, background: "#2d3148", color: linkCopied ? "#22c55e" : "#94a3b8", cursor: "pointer" }}
+            onClick={copyLink}
+            title="Copy link to current investigation"
+          >
+            {linkCopied ? "Copied!" : "Copy link"}
+          </button>
           <button
             style={closeBtn}
             onClick={onClose}
