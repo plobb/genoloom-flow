@@ -2,6 +2,7 @@ import io
 import json
 import os
 import shutil
+import sys
 import tarfile
 import uuid
 from datetime import datetime, timezone
@@ -34,7 +35,9 @@ _SAMPLE_TRACE = os.path.join(_SAMPLE_DIR, "trace.txt")
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _RUNS_DIR = _PROJECT_ROOT / "runs"
-_IMPORTS_DIR = _RUNS_DIR / "imports"
+_IMPORTS_DIR          = _RUNS_DIR / "imports"
+_IMPORTED_ARCHIVES_DIR = _RUNS_DIR / "imported_archives"
+_RUNS_RESERVED = {"imports", "imported_archives"}
 _WORK_DIR = _PROJECT_ROOT / "work"
 _BUNDLE_DIR = Path(os.getenv("BUNDLE_DIR", "/app/bundle"))
 _FILE_LIMIT = 200 * 1024  # 200 KB
@@ -117,7 +120,7 @@ def _unique_display_name(base: str) -> str:
         return base
     existing: set[str] = set()
     for d in _RUNS_DIR.iterdir():
-        if d.is_dir():
+        if d.is_dir() and d.name not in _RUNS_RESERVED:
             dn = _read_meta(d).get("display_name", "")
             if dn:
                 existing.add(dn)
@@ -433,7 +436,7 @@ def list_runs():
         return []
     result = []
     for d in sorted(_RUNS_DIR.iterdir()):
-        if not d.is_dir():
+        if not d.is_dir() or d.name in _RUNS_RESERVED:
             continue
         meta = _read_meta(d)
         # Imported bundles are static; skip the live-runner status check for them.
@@ -668,7 +671,20 @@ def import_from_folder(filename: str):
     if not safe_path.exists():
         raise HTTPException(status_code=404, detail=f"Bundle not found: {filename!r}")
     raw = safe_path.read_bytes()
-    return _import_archive_bytes(raw, filename)
+    result = _import_archive_bytes(raw, filename)
+    # Move the archive out of imports/ so it no longer appears in future scans.
+    try:
+        _IMPORTED_ARCHIVES_DIR.mkdir(parents=True, exist_ok=True)
+        dest = _IMPORTED_ARCHIVES_DIR / filename
+        # If a file with the same name already exists, suffix with the run id to avoid collision.
+        if dest.exists():
+            stem = filename[: -len(".tar.gz")]
+            dest = _IMPORTED_ARCHIVES_DIR / f"{stem}_{result['run_id']}.tar.gz"
+        safe_path.rename(dest)
+    except Exception as exc:
+        print(f"Warning: imported archive move failed for {filename!r}: {exc}", file=sys.stderr)
+        result["archive_move_warning"] = f"Archive not moved: {exc}"
+    return result
 
 
 @app.get("/api/bundle/status")

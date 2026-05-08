@@ -1164,8 +1164,9 @@ export default function App() {
           {importableFiles !== null && (
             <div style={{ maxHeight: 180, overflowY: "auto", marginTop: 2 }}>
               {importableFiles.length === 0 ? (
-                <div style={{ padding: "5px 10px 6px", fontSize: 11, color: "#475569", lineHeight: 1.4 }}>
-                  No bundles found in runs/imports/
+                <div style={{ padding: "5px 10px 7px", fontSize: 11, color: "#475569", lineHeight: 1.5 }}>
+                  <div>No completed bundles found in runs/imports/</div>
+                  <div style={{ color: "#374151", marginTop: 2 }}>.partial uploads are ignored until complete</div>
                 </div>
               ) : (
                 importableFiles.map((b) => (
@@ -1485,6 +1486,8 @@ export default function App() {
               </span>
             </div>
           </div>
+        ) : activeRun && displayGraph.nodes.length === 0 ? (
+          <div style={s.message}>No renderable workflow nodes found for this DAG.</div>
         ) : activeRun ? (
           <>
             <Graph
