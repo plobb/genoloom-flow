@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel as _PydanticBase
 
@@ -39,6 +39,7 @@ _IMPORTS_DIR          = _RUNS_DIR / "imports"
 _IMPORTED_ARCHIVES_DIR = _RUNS_DIR / "imported_archives"
 _RUNS_RESERVED = {"imports", "imported_archives"}
 _WORK_DIR = _PROJECT_ROOT / "work"
+_SCRIPTS_DIR = _PROJECT_ROOT / "scripts"
 _BUNDLE_DIR = Path(os.getenv("BUNDLE_DIR", "/app/bundle"))
 _FILE_LIMIT = 200 * 1024  # 200 KB
 
@@ -743,6 +744,19 @@ async def graph_upload(
         status_map = parse_trace_content(trace_text)
 
     return _build_graph(parsed, status_map)
+
+
+@app.get("/tools/genoloom-upload.sh")
+def download_upload_tool():
+    """Serve the genoloom-upload.sh remote upload helper as a downloadable file."""
+    script_path = _SCRIPTS_DIR / "genoloom-upload.sh"
+    if not script_path.is_file():
+        raise HTTPException(status_code=404, detail="Upload tool script not found")
+    return FileResponse(
+        path=str(script_path),
+        media_type="application/x-sh",
+        filename="genoloom-upload.sh",
+    )
 
 
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
