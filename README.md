@@ -76,6 +76,62 @@ tar -czf my_run.tar.gz dag.dot trace.txt work_dir/
 
 ---
 
+## Remote upload helper
+
+For runs that live on a remote cluster or HPC node, GenoLoom provides a self-contained upload script that bundles the run and optionally SCPs it directly into the imports folder.
+
+**Download**: **Upload > Download remote upload tool** in the GenoLoom web UI saves `genoloom-upload.sh` to your local machine. Copy it to the machine where the Nextflow run lives.
+
+```bash
+chmod +x genoloom-upload.sh
+```
+
+**Local bundle only** (then manually copy the archive):
+
+```bash
+./genoloom-upload.sh \
+  --run-dir /path/to/nextflow/run \
+  --name failed_run \
+  --out-dir /tmp
+```
+
+**Remote upload** (SCP directly to the GenoLoom imports folder):
+
+```bash
+./genoloom-upload.sh \
+  --run-dir /path/to/nextflow/run \
+  --name failed_run \
+  --host genoloom.example.org \
+  --user genoloom-upload \
+  --remote-dir /srv/genoloom/runs/imports
+```
+
+After the upload completes, use **Upload > Scan imports folder**, then click **Import** next to the bundle.
+
+**Artefacts bundled:**
+
+| File | Status |
+|---|---|
+| `dag.dot` | Required — pipeline graph |
+| `trace.txt` | Recommended — enables task status and failure grouping |
+| `report.html`, `timeline.html` | Optional |
+| `.nextflow.log` | Optional |
+| `work/` or `work_dir/` | Optional — normalised to `work_dir/` inside the archive; exclude with `--no-work` |
+
+Generate these artefacts by running Nextflow with:
+
+```bash
+nextflow run <pipeline> \
+  -with-dag dag.dot \
+  -with-trace trace.txt \
+  -with-report report.html \
+  -with-timeline timeline.html
+```
+
+Uploads use a `.partial` suffix during transfer and are renamed to `.tar.gz` only once complete. GenoLoom ignores `.partial` files during scans, so incomplete uploads never appear in the import list.
+
+---
+
 ## Key features
 
 ### Graph views
