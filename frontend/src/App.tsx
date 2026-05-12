@@ -7,6 +7,7 @@ import { getInitialDemoGraph, runDemoSimulation } from "./demoWorkflow";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 const VIEWER_MODE = import.meta.env.VITE_VIEWER_MODE === "true";
+const ENABLE_WORKBENCH = import.meta.env.VITE_ENABLE_WORKBENCH === "true";
 
 const SEED_TEMPLATES: WorkflowTemplate[] = [
   { id: "rnaseq-demo", name: "RNA-seq demo", source: "local", description: "Demo RNA-seq pipeline with simulated execution" },
@@ -926,8 +927,9 @@ export default function App() {
     }
   }
 
-  // Auto-load on first render. In viewer/public mode start the demo directly.
-  // If the URL contains ?run=, skip the default load — the restore effect handles it.
+  // On first render: check bundle status and load any persisted runs from the backend.
+  // In viewer/public mode start the demo directly.
+  // If the URL contains ?run=, the restore effect handles navigation.
   useEffect(() => {
     fetch(`${API}/api/bundle/status`)
       .then((r) => r.ok ? r.json() : null)
@@ -950,7 +952,6 @@ export default function App() {
       return;
     }
 
-    if (!hasUrlRun) loadSample();
     fetchBackendRuns();
   }, []);
 
@@ -1081,22 +1082,39 @@ export default function App() {
       <div style={s.header}>
         <span style={s.appName}>GENOLOOM</span>
         {/* ── Mode switch ── */}
-        <div style={{ display: "flex", background: "#131620", border: "1px solid #2d3148", borderRadius: 6, overflow: "hidden" }}>
-          {(["debugger", "workbench"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              style={{
-                padding: "5px 12px", fontSize: 12, fontWeight: 500, cursor: "pointer", border: "none",
-                background: mode === m ? "#4f46e5" : "transparent",
-                color: mode === m ? "#fff" : "#64748b",
-                textTransform: "capitalize",
-              }}
-            >
-              {m.charAt(0).toUpperCase() + m.slice(1)}
-            </button>
-          ))}
-        </div>
+        {ENABLE_WORKBENCH && (
+          <div style={{ display: "flex", background: "#131620", border: "1px solid #2d3148", borderRadius: 6, overflow: "hidden" }}>
+            {(["debugger", "workbench"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                style={{
+                  padding: "5px 12px", fontSize: 12, fontWeight: 500, cursor: "pointer", border: "none",
+                  background: mode === m ? "#4f46e5" : "transparent",
+                  color: mode === m ? "#fff" : "#64748b",
+                  textTransform: "capitalize",
+                }}
+              >
+                {m.charAt(0).toUpperCase() + m.slice(1)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── Demo ── */}
+        <DropdownMenu
+          label={activeDemoRunning ? "Demo •" : "Demo"}
+          triggerStyle={activeDemoRunning ? { borderColor: "#d97706", color: "#fcd34d", background: "#451a03" } : undefined}
+          open={openMenu === "demo"}
+          onToggle={() => setOpenMenu((m) => m === "demo" ? null : "demo")}
+        >
+          <MenuItem onClick={() => { loadSample(); setOpenMenu(null); }} disabled={loading}>
+            Sample completed run
+          </MenuItem>
+          <MenuItem onClick={() => { startDemo(); setOpenMenu(null); }} disabled={activeDemoRunning}>
+            {activeDemoRunning ? "Simulating…" : "RNA-seq failure demo"}
+          </MenuItem>
+        </DropdownMenu>
 
         <div style={s.spacer} />
 
@@ -1118,21 +1136,6 @@ export default function App() {
           </MenuItem>
           <MenuItem onClick={() => { setLayout("force"); setOpenMenu(null); }}>
             {layout === "force" ? "✓ " : "  "}Force layout
-          </MenuItem>
-        </DropdownMenu>
-
-        {/* ── Demo ── */}
-        <DropdownMenu
-          label={activeDemoRunning ? "Demo •" : "Demo"}
-          triggerStyle={activeDemoRunning ? { borderColor: "#d97706", color: "#fcd34d", background: "#451a03" } : undefined}
-          open={openMenu === "demo"}
-          onToggle={() => setOpenMenu((m) => m === "demo" ? null : "demo")}
-        >
-          <MenuItem onClick={() => { loadSample(); setOpenMenu(null); }} disabled={loading}>
-            Sample completed run
-          </MenuItem>
-          <MenuItem onClick={() => { startDemo(); setOpenMenu(null); }} disabled={activeDemoRunning}>
-            {activeDemoRunning ? "Simulating…" : "RNA-seq failure demo"}
           </MenuItem>
         </DropdownMenu>
 
@@ -1200,21 +1203,23 @@ export default function App() {
         </DropdownMenu>
 
         {/* ── Run ── */}
-        <DropdownMenu
-          label="Run"
-          triggerStyle={{ borderColor: VIEWER_MODE ? "#374151" : "#16a34a", background: VIEWER_MODE ? "#1a1f2e" : "#14532d", color: VIEWER_MODE ? "#4b5563" : "#86efac" }}
-          open={!VIEWER_MODE && openMenu === "run"}
-          onToggle={() => { if (!VIEWER_MODE) setOpenMenu((m) => m === "run" ? null : "run"); }}
-          disabled={VIEWER_MODE}
-          title={VIEWER_MODE ? "Runner unavailable in Docker viewer mode" : undefined}
-        >
-          <MenuItem onClick={() => { launchRun(); setOpenMenu(null); }} disabled={running || loading}>
-            {running ? "Running…" : "Run nf-core/demo"}
-          </MenuItem>
-          <div style={{ padding: "4px 10px 6px", fontSize: 10, color: "#475569", lineHeight: 1.4 }}>
-            Requires Nextflow + Docker
-          </div>
-        </DropdownMenu>
+        {ENABLE_WORKBENCH && (
+          <DropdownMenu
+            label="Run"
+            triggerStyle={{ borderColor: VIEWER_MODE ? "#374151" : "#16a34a", background: VIEWER_MODE ? "#1a1f2e" : "#14532d", color: VIEWER_MODE ? "#4b5563" : "#86efac" }}
+            open={!VIEWER_MODE && openMenu === "run"}
+            onToggle={() => { if (!VIEWER_MODE) setOpenMenu((m) => m === "run" ? null : "run"); }}
+            disabled={VIEWER_MODE}
+            title={VIEWER_MODE ? "Runner unavailable in Docker viewer mode" : undefined}
+          >
+            <MenuItem onClick={() => { launchRun(); setOpenMenu(null); }} disabled={running || loading}>
+              {running ? "Running…" : "Run nf-core/demo"}
+            </MenuItem>
+            <div style={{ padding: "4px 10px 6px", fontSize: 10, color: "#475569", lineHeight: 1.4 }}>
+              Requires Nextflow + Docker
+            </div>
+          </DropdownMenu>
+        )}
 
         <input ref={traceRef} type="file" accept=".txt,text/plain" style={{ display: "none" }} onChange={async (e) => {
           const tf = e.target.files?.[0] ?? null;
@@ -1245,7 +1250,7 @@ export default function App() {
       </div>
 
       {/* ── Workbench mode ── */}
-      {mode === "workbench" && (
+      {mode === "workbench" && ENABLE_WORKBENCH && (
         <div style={{ flex: 1, overflowY: "auto", background: "#0f1117", padding: "32px 40px" }}>
           <div style={{ maxWidth: 680, margin: "0 auto" }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>nf-core Workbench</div>
@@ -1336,6 +1341,7 @@ export default function App() {
                 const isHovered = hoveredSidebarId === run.run_id;
                 const srcKey = (run.source ?? "local-nextflow") as RunSource;
                 const srcCfg = RUN_SOURCE_CONFIG[srcKey] ?? RUN_SOURCE_CONFIG["local-nextflow"];
+                const canArchiveDelete = srcKey !== "sample" && srcKey !== "simulated";
                 const inMemRun  = workflowRuns.find((r) => r.id === run.run_id);
                 const displayStatus = ((inMemRun?.status ?? run.status ?? "COMPLETED") as string).toUpperCase();
                 const statusColor = RUN_STATUS_COLOUR[displayStatus as WorkflowRun["status"]] ?? "#9ca3af";
@@ -1358,7 +1364,7 @@ export default function App() {
                       <div style={{ ...s.runName, flex: 1 }} title={run.display_name ?? run.name ?? run.run_id}>
                         {run.display_name ?? run.name ?? run.run_id.slice(0, 8)}
                       </div>
-                      {isHovered && (
+                      {isHovered && canArchiveDelete && (
                         <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
                           <button
                             style={{

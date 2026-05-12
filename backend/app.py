@@ -523,9 +523,9 @@ def get_run_graph(run_id: str):
 @app.post("/api/runs/{run_id}/archive")
 def archive_run(run_id: str, payload: _ArchivePayload):
     """Persist the archived flag for a run by updating its meta.json."""
-    run_dir = (_RUNS_DIR / run_id).resolve()
-    if not str(run_dir).startswith(str(_RUNS_DIR.resolve())):
+    if not run_id or "/" in run_id or "\\" in run_id or run_id.startswith(".") or run_id in _RUNS_RESERVED:
         raise HTTPException(status_code=400, detail="Invalid run_id")
+    run_dir = _RUNS_DIR / run_id
     if not run_dir.is_dir():
         raise HTTPException(status_code=404, detail="Run not found")
     meta = _read_meta(run_dir)
@@ -537,9 +537,9 @@ def archive_run(run_id: str, payload: _ArchivePayload):
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str):
     """Permanently delete a run directory. Only allowed when the run is archived."""
-    run_dir = (_RUNS_DIR / run_id).resolve()
-    if not str(run_dir).startswith(str(_RUNS_DIR.resolve())):
+    if not run_id or "/" in run_id or "\\" in run_id or run_id.startswith(".") or run_id in _RUNS_RESERVED:
         raise HTTPException(status_code=400, detail="Invalid run_id")
+    run_dir = _RUNS_DIR / run_id
     if not run_dir.is_dir():
         raise HTTPException(status_code=404, detail="Run not found")
     meta = _read_meta(run_dir)
@@ -548,7 +548,11 @@ def delete_run(run_id: str):
             status_code=409,
             detail="Run must be archived before it can be deleted. Archive it first.",
         )
-    shutil.rmtree(run_dir)
+    # External-path run: symlink pointing outside runs/ — only remove GenoLoom's reference
+    if run_dir.is_symlink() and not str(run_dir.resolve()).startswith(str(_RUNS_DIR.resolve())):
+        run_dir.unlink()
+    else:
+        shutil.rmtree(run_dir)
     return {"run_id": run_id, "deleted": True}
 
 
