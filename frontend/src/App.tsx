@@ -1161,6 +1161,10 @@ export default function App() {
             Import run archive (.tar.gz)
           </MenuItem>
           <MenuDivider />
+          <MenuItem onClick={() => { window.location.href = `${API}/tools/genoloom-upload.sh`; setOpenMenu(null); }}>
+            Download remote upload tool
+          </MenuItem>
+          <MenuDivider />
           <MenuItem onClick={() => { fetchImports(); }} disabled={importsLoading || loading}>
             {importsLoading ? "Scanning…" : "Scan imports folder"}
           </MenuItem>
